@@ -44,7 +44,47 @@ All services run as Docker containers in the same network.
 3. **SSL certificates** from Let's Encrypt
 4. **GHCR access** (GitHub Container Registry)
 
-### DNS Configuration
+### 1️⃣ Create Deployment User (Security Best Practice)
+
+```bash
+# Connect as root
+ssh root@YOUR_DROPLET_IP
+
+# Create user 'ilenia'
+adduser ilenia
+
+# Add to sudo and docker groups
+usermod -aG sudo,docker ilenia
+
+# Copy SSH keys for passwordless login
+mkdir -p /home/ilenia/.ssh
+cp ~/.ssh/authorized_keys /home/ilenia/.ssh/
+chown -R ilenia:ilenia /home/ilenia/.ssh
+chmod 700 /home/ilenia/.ssh
+chmod 600 /home/ilenia/.ssh/authorized_keys
+
+# Verify docker works without sudo
+su - ilenia
+docker --version
+exit
+
+# Set permissions for SSL certificates
+chmod 755 /etc/letsencrypt/live
+chmod 755 /etc/letsencrypt/archive
+```
+
+**Configure SSH on your local machine** (`~/.ssh/config`):
+
+```
+Host ilenia-droplet
+    HostName YOUR_DROPLET_IP
+    User ilenia
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+Now you can connect with: `ssh ilenia-droplet`
+
+### 2️⃣ DNS Configuration
 
 Add an A record in your DNS provider:
 
@@ -61,61 +101,61 @@ dig ilenia.link3rs.com +short
 # Should return your droplet IP
 ```
 
-### Installation Steps
-
-#### 1️⃣ Upload Configuration Files
+### 3️⃣ Setup SSL Certificates (First Time)
 
 ```bash
-# From your local machine
-scp -r nginx/ root@YOUR_DROPLET_IP:~/
+# As root (before Docker deployment)
+sudo certbot certonly --standalone -d ilenia.link3rs.com --email your@email.com --agree-tos
+
+# Set permissions for Docker to read certificates
+sudo chmod 755 /etc/letsencrypt/live
+sudo chmod 755 /etc/letsencrypt/archive
 ```
 
-#### 2️⃣ Install Nginx
+### 4️⃣ Deploy with Docker Compose
 
 ```bash
-# SSH into your droplet
-ssh root@YOUR_DROPLET_IP
+# Connect as deployment user
+ssh ilenia-droplet
 
-# Navigate to nginx directory
-cd ~/nginx
-
-# Make scripts executable
-chmod +x setup-nginx.sh setup-ssl.sh
-
-# Run Nginx setup
-sudo ./setup-nginx.sh
-```
-
-#### 3️⃣ Deploy Frontend
-
-```bash
-# Build React frontend locally
-cd ilenia-react-frontend
-npm run build
-
-# Upload to droplet
-scp -r dist/* root@YOUR_DROPLET_IP:/var/www/ilenia-frontend/
-```
-
-#### 4️⃣ Setup SSL Certificate
-
-```bash
-# On your droplet
-cd ~/nginx
-
-# Edit setup-ssl.sh and update EMAIL variable
-nano setup-ssl.sh
-
-# Run SSL setup
-sudo ./setup-ssl.sh
-```
-
-#### 5️⃣ Start Backend Services
-
-```bash
-# Using Docker Compose
+# Create deployment directory
+mkdir -p ~/ilenia-deployment
 cd ~/ilenia-deployment
-docker-compose -f docker-compose.production.yml up -d
+
+# Login to GitHub Container Registry
+docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
+
+# Download docker-compose.yml
+wget https://raw.githubusercontent.com/link3rs/ilenia-nginx/develop/docker-compose.yml
+
+# Create .env file with your configuration
+cat > .env <<EOF
+HF_ASR_URL=https://your-asr-endpoint.hf.space
+HF_ASR_TOKEN=hf_your_token_here
+HF_MT_URL=https://your-mt-endpoint.hf.space
+HF_MT_TOKEN=hf_your_token_here
+LOG_LEVEL=INFO
+EOF
+
+# Pull images and start all services
+docker-compose pull
+docker-compose up -d
+
+# Verify all containers are running
+docker-compose ps
+```
+
+### 5️⃣ Verify Deployment
+
+```bash
+# Test nginx health
+curl https://ilenia.link3rs.com/health
+
+# Test backend API
+curl https://ilenia.link3rs.com/api/live/health
+
+# Test frontend
+curl -I https://ilenia.link3rs.com/
 ```
 
 ## 🔧 Configuration Details
@@ -244,40 +284,47 @@ netstat -an | grep ESTABLISHED | grep :8082
 
 ## 🔄 Updating
 
-### Update Nginx Configuration
+### Update All Services
 
 ```bash
-# Edit configuration
-nano /etc/nginx/sites-available/ilenia.link3rs.com
+# Connect as deployment user
+ssh ilenia-droplet
+cd ~/ilenia-deployment
 
-# Test configuration
-nginx -t
+# Pull latest images from GHCR
+docker-compose pull
 
-# Reload Nginx
-systemctl reload nginx
+# Restart with new images (zero downtime)
+docker-compose up -d
+
+# Verify
+docker-compose ps
 ```
 
-### Update Frontend
+### Update Single Service
 
 ```bash
-# Build new version locally
-cd ilenia-react-frontend
-npm run build
+# Update only frontend
+docker-compose pull react-frontend
+docker-compose up -d react-frontend
 
-# Upload to droplet
-scp -r dist/* root@YOUR_DROPLET_IP:/var/www/ilenia-frontend/
+# Update only backend
+docker-compose pull live-service
+docker-compose up -d live-service
 
-# Clear browser cache or use versioned assets
+# Update only nginx
+docker-compose pull nginx
+docker-compose up -d nginx
 ```
 
-### Update Backend
+### View Update Logs
 
 ```bash
-# Pull new images
-docker-compose -f docker-compose.production.yml pull
+# Watch logs during update
+docker-compose logs -f
 
-# Restart services
-docker-compose -f docker-compose.production.yml up -d
+# Check specific service
+docker-compose logs -f live-service
 ```
 
 ## 🛠️ Troubleshooting
@@ -288,14 +335,16 @@ docker-compose -f docker-compose.production.yml up -d
 
 **Solution**:
 ```bash
-# Check if backend is running
-docker ps | grep ilenia-backend
+cd ~/ilenia-deployment
+
+# Check all containers
+docker-compose ps
 
 # Check backend logs
-docker logs ilenia-backend
+docker-compose logs live-service
 
 # Restart backend
-docker-compose -f docker-compose.production.yml restart backend
+docker-compose restart live-service
 ```
 
 ### 504 Gateway Timeout
