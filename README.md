@@ -1,6 +1,6 @@
-# 🌐 Nginx Reverse Proxy Setup for Ilenia
+# 🌐 Ilenia Nginx - Reverse Proxy for Ilenia Services
 
-This directory contains Nginx configuration and setup scripts for deploying Ilenia on a DigitalOcean Droplet with path-based routing.
+Docker image for Nginx reverse proxy that routes traffic to Ilenia microservices.
 
 ## 📋 Architecture
 
@@ -9,39 +9,40 @@ Internet
     ↓
 ilenia.link3rs.com (Nginx on ports 80/443)
     ↓
-    ├─ /                          → React Frontend (static files)
-    ├─ /api/live/*                → Backend Live Service (localhost:8082)
-    ├─ /api/auth/*                → Backend Auth Service (localhost:8081)
-    ├─ /api/livekit/*             → Backend LiveKit Service (localhost:8086)
-    ├─ /ws/live/v2/captions       → WebSocket (localhost:8082)
-    ├─ /ws/live/v2/speaker/:id    → WebSocket (localhost:8082)
-    └─ /ws/live/v2/manager/:id    → WebSocket (localhost:8082)
+    ├─ /                          → react-frontend:80 (Docker)
+    ├─ /api/live/*                → live-service:8082 (Docker)
+    ├─ /api/auth/*                → auth-service:8081 (Docker)
+    ├─ /ws/live/v2/captions       → live-service:8082 (WebSocket)
+    ├─ /ws/live/v2/speaker/:id    → live-service:8082 (WebSocket)
+    └─ /ws/live/v2/manager/:id    → live-service:8082 (WebSocket)
 ```
+
+All services run as Docker containers in the same network.
 
 ## 🎯 URL Mapping
 
 ### Frontend
-- `https://ilenia.link3rs.com/` → React app (static files)
-- `https://ilenia.link3rs.com/health` → Health check
+- `https://ilenia.link3rs.com/` → React app
+- `https://ilenia.link3rs.com/health` → Nginx health check
 
 ### REST APIs
 - `https://ilenia.link3rs.com/api/live/health` → Live service health
 - `https://ilenia.link3rs.com/api/live/sessions` → Live service sessions
 - `https://ilenia.link3rs.com/api/auth/login` → Auth service login
-- `https://ilenia.link3rs.com/api/livekit/rooms` → LiveKit service rooms
 
 ### WebSockets
 - `wss://ilenia.link3rs.com/ws/live/v2/captions` → Captions WebSocket
 - `wss://ilenia.link3rs.com/ws/live/v2/speaker/{session_id}` → Speaker WebSocket
 - `wss://ilenia.link3rs.com/ws/live/v2/manager/{session_id}` → Manager WebSocket
 
-## 🚀 Quick Setup
+## 🚀 Quick Deployment
 
 ### Prerequisites
 
-1. **DigitalOcean Droplet** with Ubuntu 22.04+
-2. **Domain** pointing to your droplet IP
-3. **Root access** to the droplet
+1. **DigitalOcean Droplet** with Ubuntu 22.04+ and Docker installed
+2. **Domain** pointing to your droplet IP (`ilenia.link3rs.com`)
+3. **SSL certificates** from Let's Encrypt
+4. **GHCR access** (GitHub Container Registry)
 
 ### DNS Configuration
 
