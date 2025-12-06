@@ -160,7 +160,24 @@ curl -I https://ilenia.link3rs.com/
 
 ## 🔧 Configuration Details
 
-### Nginx Configuration File
+### Nginx Configuration Files
+
+The Docker container uses **two nginx configuration files** from the `nginx/` directory:
+
+| File | Destination in Container | Purpose |
+|------|--------------------------|---------|
+| `nginx/nginx.conf` | `/etc/nginx/nginx.conf` | **Global configuration** - workers, logs, gzip, timeouts |
+| `nginx/ilenia.link3rs.com.conf` | `/etc/nginx/conf.d/default.conf` | **Virtual host** - SSL, upstreams, routing to services |
+
+Both files are copied in the Dockerfile:
+```dockerfile
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+COPY nginx/ilenia.link3rs.com.conf /etc/nginx/conf.d/default.conf
+```
+
+The global `nginx.conf` includes all files in `conf.d/` via the standard nginx include directive, loading `ilenia.link3rs.com.conf` as the default server block.
+
+### Virtual Host Configuration
 
 `ilenia.link3rs.com.conf` includes:
 
