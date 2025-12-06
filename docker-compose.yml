@@ -1,0 +1,165 @@
+version: "3.9"
+
+# Ilenia Production Stack for DigitalOcean Droplet
+# All services from GHCR with Nginx as reverse proxy
+#
+# Usage:
+#   docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
+#   docker-compose pull
+#   docker-compose up -d
+#
+# Services:
+#   - nginx:          Reverse proxy with SSL (ports 80, 443)
+#   - react-frontend: React SPA (internal port 80)
+#   - live-service:   Live event service (internal port 8082)
+#   - auth-service:   Authentication service (internal port 8081)
+
+services:
+  # ============================================
+  # Nginx Reverse Proxy
+  # ============================================
+  nginx:
+    image: ghcr.io/link3rs/ilenia-nginx:develop
+    container_name: ilenia-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # SSL certificates from Let's Encrypt
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot
+      # Nginx logs
+      - nginx-logs:/var/log/nginx
+    depends_on:
+      - react-frontend
+      - live-service
+      - auth-service
+    networks:
+      - ilenia-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # React Frontend
+  # ============================================
+  react-frontend:
+    image: ghcr.io/link3rs/ilenia-react-frontend:develop
+    container_name: ilenia-frontend
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      - VITE_ENV=production
+      - VITE_PRODUCTION_DOMAIN=ilenia.link3rs.com
+    networks:
+      - ilenia-net
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Live Event Service (STT, MT, TTS)
+  # ============================================
+  live-service:
+    image: ghcr.io/link3rs/ilenia-live-event-service:develop
+    container_name: ilenia-live-service
+    restart: unless-stopped
+    expose:
+      - "8082"
+    environment:
+      # Environment
+      - ENV=production
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8082
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      
+      # HuggingFace Services (required)
+      - HF_ASR_URL=${HF_ASR_URL}
+      - HF_ASR_TOKEN=${HF_ASR_TOKEN}
+      - HF_MT_URL=${HF_MT_URL}
+      - HF_MT_TOKEN=${HF_MT_TOKEN}
+      
+      # VAD Configuration (optional)
+      - ASR_RMS_SPEECH_THRESHOLD=${ASR_RMS_SPEECH_THRESHOLD:-0.003}
+      - ASR_MIN_SPEECH_DURATION_MS=${ASR_MIN_SPEECH_DURATION_MS:-300}
+      - ASR_MIN_SILENCE_DURATION_MS=${ASR_MIN_SILENCE_DURATION_MS:-500}
+      - ASR_SPEECH_PAD_MS=${ASR_SPEECH_PAD_MS:-400}
+    volumes:
+      - live-recordings:/app/recordings
+      - live-logs:/app/logs
+    networks:
+      - ilenia-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Auth Service
+  # ============================================
+  auth-service:
+    image: ghcr.io/link3rs/ilenia-auth-service:develop
+    container_name: ilenia-auth-service
+    restart: unless-stopped
+    expose:
+      - "8081"
+    environment:
+      - NODE_ENV=production
+      - PORT=8081
+      # Add your auth service environment variables here
+      # - JWT_SECRET=${JWT_SECRET}
+      # - DB_URL=${DB_URL}
+    networks:
+      - ilenia-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  ilenia-net:
+    driver: bridge
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  certbot-webroot:
+  nginx-logs:
+  live-recordings:
+  live-logs:

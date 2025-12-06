@@ -1,6 +1,6 @@
-# 🌐 Nginx Reverse Proxy Setup for Ilenia
+# 🌐 Ilenia Nginx - Reverse Proxy for Ilenia Services
 
-This directory contains Nginx configuration and setup scripts for deploying Ilenia on a DigitalOcean Droplet with path-based routing.
+Docker image for Nginx reverse proxy that routes traffic to Ilenia microservices.
 
 ## 📋 Architecture
 
@@ -9,41 +9,82 @@ Internet
     ↓
 ilenia.link3rs.com (Nginx on ports 80/443)
     ↓
-    ├─ /                          → React Frontend (static files)
-    ├─ /api/live/*                → Backend Live Service (localhost:8082)
-    ├─ /api/auth/*                → Backend Auth Service (localhost:8081)
-    ├─ /api/livekit/*             → Backend LiveKit Service (localhost:8086)
-    ├─ /ws/live/v2/captions       → WebSocket (localhost:8082)
-    ├─ /ws/live/v2/speaker/:id    → WebSocket (localhost:8082)
-    └─ /ws/live/v2/manager/:id    → WebSocket (localhost:8082)
+    ├─ /                          → react-frontend:80 (Docker)
+    ├─ /api/live/*                → live-service:8082 (Docker)
+    ├─ /api/auth/*                → auth-service:8081 (Docker)
+    ├─ /ws/live/v2/captions       → live-service:8082 (WebSocket)
+    ├─ /ws/live/v2/speaker/:id    → live-service:8082 (WebSocket)
+    └─ /ws/live/v2/manager/:id    → live-service:8082 (WebSocket)
 ```
+
+All services run as Docker containers in the same network.
 
 ## 🎯 URL Mapping
 
 ### Frontend
-- `https://ilenia.link3rs.com/` → React app (static files)
-- `https://ilenia.link3rs.com/health` → Health check
+- `https://ilenia.link3rs.com/` → React app
+- `https://ilenia.link3rs.com/health` → Nginx health check
 
 ### REST APIs
 - `https://ilenia.link3rs.com/api/live/health` → Live service health
 - `https://ilenia.link3rs.com/api/live/sessions` → Live service sessions
 - `https://ilenia.link3rs.com/api/auth/login` → Auth service login
-- `https://ilenia.link3rs.com/api/livekit/rooms` → LiveKit service rooms
 
 ### WebSockets
 - `wss://ilenia.link3rs.com/ws/live/v2/captions` → Captions WebSocket
 - `wss://ilenia.link3rs.com/ws/live/v2/speaker/{session_id}` → Speaker WebSocket
 - `wss://ilenia.link3rs.com/ws/live/v2/manager/{session_id}` → Manager WebSocket
 
-## 🚀 Quick Setup
+## 🚀 Quick Deployment
 
 ### Prerequisites
 
-1. **DigitalOcean Droplet** with Ubuntu 22.04+
-2. **Domain** pointing to your droplet IP
-3. **Root access** to the droplet
+1. **DigitalOcean Droplet** with Ubuntu 22.04+ and Docker installed
+2. **Domain** pointing to your droplet IP (`ilenia.link3rs.com`)
+3. **SSL certificates** from Let's Encrypt
+4. **GHCR access** (GitHub Container Registry)
 
-### DNS Configuration
+### 1️⃣ Create Deployment User (Security Best Practice)
+
+```bash
+# Connect as root
+ssh root@YOUR_DROPLET_IP
+
+# Create user 'ilenia'
+adduser ilenia
+
+# Add to sudo and docker groups
+usermod -aG sudo,docker ilenia
+
+# Copy SSH keys for passwordless login
+mkdir -p /home/ilenia/.ssh
+cp ~/.ssh/authorized_keys /home/ilenia/.ssh/
+chown -R ilenia:ilenia /home/ilenia/.ssh
+chmod 700 /home/ilenia/.ssh
+chmod 600 /home/ilenia/.ssh/authorized_keys
+
+# Verify docker works without sudo
+su - ilenia
+docker --version
+exit
+
+# Set permissions for SSL certificates
+chmod 755 /etc/letsencrypt/live
+chmod 755 /etc/letsencrypt/archive
+```
+
+**Configure SSH on your local machine** (`~/.ssh/config`):
+
+```
+Host ilenia-droplet
+    HostName YOUR_DROPLET_IP
+    User ilenia
+    IdentityFile ~/.ssh/id_ed25519
+```
+
+Now you can connect with: `ssh ilenia-droplet`
+
+### 2️⃣ DNS Configuration
 
 Add an A record in your DNS provider:
 
@@ -60,66 +101,83 @@ dig ilenia.link3rs.com +short
 # Should return your droplet IP
 ```
 
-### Installation Steps
-
-#### 1️⃣ Upload Configuration Files
+### 3️⃣ Setup SSL Certificates (First Time)
 
 ```bash
-# From your local machine
-scp -r nginx/ root@YOUR_DROPLET_IP:~/
+# As root (before Docker deployment)
+sudo certbot certonly --standalone -d ilenia.link3rs.com --email your@email.com --agree-tos
+
+# Set permissions for Docker to read certificates
+sudo chmod 755 /etc/letsencrypt/live
+sudo chmod 755 /etc/letsencrypt/archive
 ```
 
-#### 2️⃣ Install Nginx
+### 4️⃣ Deploy with Docker Compose
 
 ```bash
-# SSH into your droplet
-ssh root@YOUR_DROPLET_IP
+# Connect as deployment user
+ssh ilenia-droplet
 
-# Navigate to nginx directory
-cd ~/nginx
-
-# Make scripts executable
-chmod +x setup-nginx.sh setup-ssl.sh
-
-# Run Nginx setup
-sudo ./setup-nginx.sh
-```
-
-#### 3️⃣ Deploy Frontend
-
-```bash
-# Build React frontend locally
-cd ilenia-react-frontend
-npm run build
-
-# Upload to droplet
-scp -r dist/* root@YOUR_DROPLET_IP:/var/www/ilenia-frontend/
-```
-
-#### 4️⃣ Setup SSL Certificate
-
-```bash
-# On your droplet
-cd ~/nginx
-
-# Edit setup-ssl.sh and update EMAIL variable
-nano setup-ssl.sh
-
-# Run SSL setup
-sudo ./setup-ssl.sh
-```
-
-#### 5️⃣ Start Backend Services
-
-```bash
-# Using Docker Compose
+# Create deployment directory
+mkdir -p ~/ilenia-deployment
 cd ~/ilenia-deployment
-docker-compose -f docker-compose.production.yml up -d
+
+# Login to GitHub Container Registry
+docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
+
+# Download docker-compose.yml
+wget https://raw.githubusercontent.com/link3rs/ilenia-nginx/develop/docker-compose.yml
+
+# Create .env file with your configuration
+cat > .env <<EOF
+HF_ASR_URL=https://your-asr-endpoint.hf.space
+HF_ASR_TOKEN=hf_your_token_here
+HF_MT_URL=https://your-mt-endpoint.hf.space
+HF_MT_TOKEN=hf_your_token_here
+LOG_LEVEL=INFO
+EOF
+
+# Pull images and start all services
+docker-compose pull
+docker-compose up -d
+
+# Verify all containers are running
+docker-compose ps
+```
+
+### 5️⃣ Verify Deployment
+
+```bash
+# Test nginx health
+curl https://ilenia.link3rs.com/health
+
+# Test backend API
+curl https://ilenia.link3rs.com/api/live/health
+
+# Test frontend
+curl -I https://ilenia.link3rs.com/
 ```
 
 ## 🔧 Configuration Details
 
-### Nginx Configuration File
+### Nginx Configuration Files
+
+The Docker container uses **two nginx configuration files** from the `nginx/` directory:
+
+| File | Destination in Container | Purpose |
+|------|--------------------------|---------|
+| `nginx/nginx.conf` | `/etc/nginx/nginx.conf` | **Global configuration** - workers, logs, gzip, timeouts |
+| `nginx/ilenia.link3rs.com.conf` | `/etc/nginx/conf.d/default.conf` | **Virtual host** - SSL, upstreams, routing to services |
+
+Both files are copied in the Dockerfile:
+```dockerfile
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+COPY nginx/ilenia.link3rs.com.conf /etc/nginx/conf.d/default.conf
+```
+
+The global `nginx.conf` includes all files in `conf.d/` via the standard nginx include directive, loading `ilenia.link3rs.com.conf` as the default server block.
+
+### Virtual Host Configuration
 
 `ilenia.link3rs.com.conf` includes:
 
@@ -243,40 +301,47 @@ netstat -an | grep ESTABLISHED | grep :8082
 
 ## 🔄 Updating
 
-### Update Nginx Configuration
+### Update All Services
 
 ```bash
-# Edit configuration
-nano /etc/nginx/sites-available/ilenia.link3rs.com
+# Connect as deployment user
+ssh ilenia-droplet
+cd ~/ilenia-deployment
 
-# Test configuration
-nginx -t
+# Pull latest images from GHCR
+docker-compose pull
 
-# Reload Nginx
-systemctl reload nginx
+# Restart with new images (zero downtime)
+docker-compose up -d
+
+# Verify
+docker-compose ps
 ```
 
-### Update Frontend
+### Update Single Service
 
 ```bash
-# Build new version locally
-cd ilenia-react-frontend
-npm run build
+# Update only frontend
+docker-compose pull react-frontend
+docker-compose up -d react-frontend
 
-# Upload to droplet
-scp -r dist/* root@YOUR_DROPLET_IP:/var/www/ilenia-frontend/
+# Update only backend
+docker-compose pull live-service
+docker-compose up -d live-service
 
-# Clear browser cache or use versioned assets
+# Update only nginx
+docker-compose pull nginx
+docker-compose up -d nginx
 ```
 
-### Update Backend
+### View Update Logs
 
 ```bash
-# Pull new images
-docker-compose -f docker-compose.production.yml pull
+# Watch logs during update
+docker-compose logs -f
 
-# Restart services
-docker-compose -f docker-compose.production.yml up -d
+# Check specific service
+docker-compose logs -f live-service
 ```
 
 ## 🛠️ Troubleshooting
@@ -287,14 +352,16 @@ docker-compose -f docker-compose.production.yml up -d
 
 **Solution**:
 ```bash
-# Check if backend is running
-docker ps | grep ilenia-backend
+cd ~/ilenia-deployment
+
+# Check all containers
+docker-compose ps
 
 # Check backend logs
-docker logs ilenia-backend
+docker-compose logs live-service
 
 # Restart backend
-docker-compose -f docker-compose.production.yml restart backend
+docker-compose restart live-service
 ```
 
 ### 504 Gateway Timeout
