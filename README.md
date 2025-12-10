@@ -4,6 +4,8 @@ Docker image for Nginx reverse proxy that routes traffic to Ilenia microservices
 
 ## 📋 Architecture
 
+### Phase 1 (Current)
+
 ```
 Internet
     ↓
@@ -11,13 +13,56 @@ ilenia.link3rs.com (Nginx on ports 80/443)
     ↓
     ├─ /                          → react-frontend:80 (Docker)
     ├─ /api/live/*                → live-service:8082 (Docker)
-    ├─ /api/auth/*                → auth-service:8081 (Docker)
+    ├─ /api/live/events           → live-service:8082 (Events CRUD - JSON persistence)
     ├─ /ws/live/v2/captions       → live-service:8082 (WebSocket)
     ├─ /ws/live/v2/speaker/:id    → live-service:8082 (WebSocket)
     └─ /ws/live/v2/manager/:id    → live-service:8082 (WebSocket)
+    
+    Redis (internal)
+    └─ redis:6379                 → Session state & cache
 ```
 
-All services run as Docker containers in the same network.
+### Phase 2 (Future)
+
+```
+    ├─ /api/auth/*                → auth-service:8081 (Docker)
+    ├─ /api/events/*              → event-service (PostgreSQL persistence)
+```
+
+All services run as Docker containers in the same network (`ilenia-net`).
+
+## 🗄️ Redis - Session State & Cache
+
+Redis is used in Phase 1 for:
+- **Session state management** for live events
+- **Captions cache** for real-time subtitle distribution
+- **Temporary data storage** during live sessions
+
+### Redis Configuration
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| Image | `redis:7-alpine` | Lightweight Alpine-based Redis 7 |
+| Container | `ilenia-redis` | Container name |
+| Port | `6379` (internal) | Not exposed externally |
+| Persistence | AOF (`appendonly yes`) | Append-only file for durability |
+| Memory | `256mb` max | Memory limit |
+| Eviction | `allkeys-lru` | Least Recently Used eviction |
+
+### Redis Health Check
+
+```bash
+# Check Redis status
+docker exec ilenia-redis redis-cli ping
+# Should return: PONG
+
+# Check Redis info
+docker exec ilenia-redis redis-cli info | grep used_memory_human
+```
+
+### Redis Data Persistence
+
+Redis data is stored in a Docker volume (`redis-data`) and persists across container restarts.
 
 ## 🎯 URL Mapping
 
@@ -27,8 +72,10 @@ All services run as Docker containers in the same network.
 
 ### REST APIs
 - `https://ilenia.link3rs.com/api/live/health` → Live service health
+- `https://ilenia.link3rs.com/api/live/events` → Events CRUD (GET, POST)
+- `https://ilenia.link3rs.com/api/live/events/{id}` → Event by ID (GET, PUT, DELETE)
+- `https://ilenia.link3rs.com/api/live/events/{id}/channels` → Channel operations
 - `https://ilenia.link3rs.com/api/live/sessions` → Live service sessions
-- `https://ilenia.link3rs.com/api/auth/login` → Auth service login
 
 ### WebSockets
 - `wss://ilenia.link3rs.com/ws/live/v2/captions` → Captions WebSocket
@@ -125,24 +172,34 @@ cd ~/ilenia-deployment
 # Login to GitHub Container Registry
 docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
 
-# Download docker-compose.yml
-wget https://raw.githubusercontent.com/link3rs/ilenia-nginx/develop/docker-compose.yml
+# Download docker-compose.no-auth.yml (Phase 1 - without auth service)
+wget https://raw.githubusercontent.com/link3rs/ilenia-nginx/develop/docker-compose.no-auth.yml -O docker-compose.yml
 
 # Create .env file with your configuration
 cat > .env <<EOF
-HF_ASR_URL=https://your-asr-endpoint.hf.space
+# HuggingFace Endpoints (configured via frontend Settings modal)
+# These are optional - the manager can configure them in the browser
+HF_ASR_URL=https://your-asr-endpoint.us-east-1.aws.endpoints.huggingface.cloud
 HF_ASR_TOKEN=hf_your_token_here
-HF_MT_URL=https://your-mt-endpoint.hf.space
+HF_MT_URL=https://your-mt-endpoint.us-east-1.aws.endpoints.huggingface.cloud/v1
 HF_MT_TOKEN=hf_your_token_here
+
+# Logging
 LOG_LEVEL=INFO
+
+# ASR Tuning (optional)
+ASR_RMS_SPEECH_THRESHOLD=0.003
+ASR_MIN_SPEECH_DURATION_MS=300
+ASR_MIN_SILENCE_DURATION_MS=500
+ASR_SPEECH_PAD_MS=400
 EOF
 
-# Pull images and start all services
-docker-compose pull
-docker-compose up -d
+# Pull images and start all services (includes Redis)
+docker compose pull
+docker compose up -d
 
-# Verify all containers are running
-docker-compose ps
+# Verify all containers are running (should show: redis, nginx, react-frontend, live-service)
+docker compose ps
 ```
 
 ### 5️⃣ Verify Deployment
@@ -153,6 +210,13 @@ curl https://ilenia.link3rs.com/health
 
 # Test backend API
 curl https://ilenia.link3rs.com/api/live/health
+
+# Test Events API
+curl https://ilenia.link3rs.com/api/live/events
+
+# Test Redis connectivity
+docker exec ilenia-redis redis-cli ping
+# Should return: PONG
 
 # Test frontend
 curl -I https://ilenia.link3rs.com/
@@ -197,11 +261,30 @@ The global `nginx.conf` includes all files in `conf.d/` via the standard nginx i
 Make sure these services are running:
 
 ```bash
-# Live Event Service (port 8082)
-docker ps | grep ilenia-backend
+# Check all containers
+docker compose ps
 
-# Auth Service (port 8081) - if implemented
-# LiveKit Service (port 8086) - if implemented
+# Expected containers in Phase 1:
+# - ilenia-redis        (Redis for session state)
+# - ilenia-nginx        (Reverse proxy)
+# - ilenia-frontend     (React app)
+# - ilenia-live-service (STT, MT, Events CRUD)
+
+# Check Redis
+docker exec ilenia-redis redis-cli ping
+
+# Check Live Service
+docker logs ilenia-live-service --tail 10
+```
+
+### Service Dependencies
+
+```
+live-service
+    └─ depends_on: redis (healthy)
+
+nginx
+    └─ depends_on: react-frontend, live-service
 ```
 
 ### Frontend Environment Variables
@@ -425,6 +508,45 @@ curl -H "Origin: https://example.com" \
      https://ilenia.link3rs.com/api/live/health -v
 ```
 
+### Redis Connection Failed
+
+**Cause**: Redis container not running or unhealthy
+
+**Solution**:
+```bash
+cd ~/ilenia-deployment
+
+# Check Redis status
+docker compose ps redis
+
+# Check Redis logs
+docker compose logs redis
+
+# Restart Redis
+docker compose restart redis
+
+# Verify Redis is healthy before live-service starts
+docker exec ilenia-redis redis-cli ping
+```
+
+### Events API Returns 405 Method Not Allowed
+
+**Cause**: Old version of live-service without Events CRUD endpoints
+
+**Solution**:
+```bash
+cd ~/ilenia-deployment
+
+# Pull latest image
+docker compose pull live-service
+
+# Recreate container with new image
+docker compose up -d --force-recreate live-service
+
+# Verify Events API works
+curl https://ilenia.link3rs.com/api/live/events
+```
+
 ## 🔐 Security
 
 ### Firewall Configuration
@@ -477,6 +599,28 @@ All responses include:
 5. **Backup configuration**: Keep backups of working Nginx configs
 6. **Test before deploy**: Always test configuration with `nginx -t`
 7. **Use staging**: Test changes on a staging environment first
+
+## 📦 Docker Volumes (Phase 1)
+
+| Volume | Container | Purpose |
+|--------|-----------|---------|
+| `redis-data` | ilenia-redis | Redis AOF persistence |
+| `live-data` | ilenia-live-service | Events JSON file (`events.json`) |
+| `live-recordings` | ilenia-live-service | Audio recordings |
+| `live-logs` | ilenia-live-service | Application logs |
+| `nginx-logs` | ilenia-nginx | Access and error logs |
+| `certbot-webroot` | ilenia-nginx | Let's Encrypt challenges |
+
+### Backup Data
+
+```bash
+# Backup events data
+docker cp ilenia-live-service:/app/data/events.json ./backup-events.json
+
+# Backup Redis data
+docker exec ilenia-redis redis-cli BGSAVE
+docker cp ilenia-redis:/data/dump.rdb ./backup-redis.rdb
+```
 
 ## 🎉 You're Ready!
 
