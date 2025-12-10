@@ -1,7 +1,36 @@
 # Ilenia Production Stack (without auth-service)
 # For deployments where auth is bypassed in frontend/backend
+#
+# Phase 1: Redis for session state + Events CRUD in live-service (JSON persistence)
+# Phase 2: event-service + Managed PostgreSQL (future)
 
 services:
+  # ============================================
+  # Redis - Session State & Cache
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: ilenia-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ilenia-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ============================================
   # Nginx Reverse Proxy
   # ============================================
@@ -37,7 +66,7 @@ services:
   # React Frontend
   # ============================================
   react-frontend:
-    image: ghcr.io/link3rs/ilenia-react-frontend:develop
+    image: ghcr.io/link3rs/ilenia-react-frontend:main
     container_name: ilenia-frontend
     restart: unless-stopped
     expose:
@@ -63,7 +92,7 @@ services:
   # Live Event Service (STT, MT, TTS)
   # ============================================
   live-service:
-    image: ghcr.io/link3rs/ilenia-live-event-service:develop
+    image: ghcr.io/link3rs/ilenia-live-event-service:main
     container_name: ilenia-live-service
     restart: unless-stopped
     expose:
@@ -81,9 +110,18 @@ services:
       - ASR_MIN_SPEECH_DURATION_MS=${ASR_MIN_SPEECH_DURATION_MS:-300}
       - ASR_MIN_SILENCE_DURATION_MS=${ASR_MIN_SILENCE_DURATION_MS:-500}
       - ASR_SPEECH_PAD_MS=${ASR_SPEECH_PAD_MS:-400}
+      # Redis configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # Events persistence (Phase 1: JSON file, Phase 2: PostgreSQL via event-service)
+      - EVENTS_STORAGE_PATH=/app/data/events.json
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - live-recordings:/app/recordings
       - live-logs:/app/logs
+      - live-data:/app/data
     networks:
       - ilenia-net
     healthcheck:
@@ -107,3 +145,5 @@ volumes:
   nginx-logs:
   live-recordings:
   live-logs:
+  live-data:
+  redis-data:
