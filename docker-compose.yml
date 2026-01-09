@@ -154,12 +154,29 @@ services:
         max-file: "3"
 
   # ============================================
+  # Auth Keys Init (fix volume ownership)
+  # ============================================
+  auth-keys-init:
+    image: alpine:3.20
+    container_name: ilenia-auth-keys-init
+    restart: "no"
+    user: "0:0"
+    volumes:
+      - auth-keys:/app/keys
+    command: ["sh", "-lc", "mkdir -p /app/keys && chown -R 10001:10001 /app/keys"]
+    networks:
+      - ilenia-net
+
+  # ============================================
   # Auth Service
   # ============================================
   auth-service:
     image: ghcr.io/link3rs/ilenia-auth-service:main
     container_name: ilenia-auth-service
     restart: unless-stopped
+    depends_on:
+      auth-keys-init:
+        condition: service_completed_successfully
     expose:
       - "8081"
     environment:

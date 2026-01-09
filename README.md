@@ -22,10 +22,16 @@ ilenia.link3rs.com (Nginx on ports 80/443)
     └─ redis:6379                 → Session state & cache
 ```
 
-### Phase 2 (Future)
+### Phase 2 (Current - with Auth Service)
 
 ```
     ├─ /api/auth/*                → auth-service:8081 (Docker)
+```
+
+### Phase 3 (Future)
+
+```
+
     ├─ /api/events/*              → event-service (PostgreSQL persistence)
 ```
 
@@ -76,6 +82,11 @@ Redis data is stored in a Docker volume (`redis-data`) and persists across conta
 - `https://ilenia.link3rs.com/api/live/events/{id}` → Event by ID (GET, PUT, DELETE)
 - `https://ilenia.link3rs.com/api/live/events/{id}/channels` → Channel operations
 - `https://ilenia.link3rs.com/api/live/sessions` → Live service sessions
+
+- `https://ilenia.link3rs.com/api/auth/login` → User authentication
+- `https://ilenia.link3rs.com/api/auth/register` → User registration
+- `https://ilenia.link3rs.com/api/auth/health` → Auth service health
+
 
 ### WebSockets
 - `wss://ilenia.link3rs.com/ws/live/v2/captions` → Captions WebSocket
@@ -172,8 +183,9 @@ cd ~/ilenia-deployment
 # Login to GitHub Container Registry
 docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
 
-# Download docker-compose.no-auth.yml (Phase 1 - without auth service)
-wget https://raw.githubusercontent.com/link3rs/ilenia-nginx/develop/docker-compose.no-auth.yml -O docker-compose.yml
+# Download docker-compose.yml (Phase 2 - with auth service)
+wget https://raw.githubusercontent.com/link3rs/ilenia-nginx/main/docker-compose.yml -O docker-compose.yml
+
 
 # Create .env file with your configuration
 cat > .env <<EOF
@@ -192,13 +204,23 @@ ASR_RMS_SPEECH_THRESHOLD=0.003
 ASR_MIN_SPEECH_DURATION_MS=300
 ASR_MIN_SILENCE_DURATION_MS=500
 ASR_SPEECH_PAD_MS=400
+
+# Auth Service Configuration
+AUTH_ISSUER=https://auth.ilenia.link3rs.com
+ACCESS_TTL_SECONDS=3600
+AUTH_SEED_ADMIN_EMAIL=admin@ilenia.link3rs.com
+AUTH_SEED_ADMIN_PASSWORD=your_secure_password_here
+AUTH_SEED_ADMIN_NAME=Admin
+AUTH_SEED_ADMIN_LANG=en
 EOF
 
-# Pull images and start all services (includes Redis)
+# Pull images and start all services (includes Redis and Auth)
 docker compose pull
 docker compose up -d
 
-# Verify all containers are running (should show: redis, nginx, react-frontend, live-service)
+# Verify all containers are running
+# Expected: redis, nginx, react-frontend, live-service, auth-service, auth-keys-init (completed)
+
 docker compose ps
 ```
 
@@ -210,6 +232,9 @@ curl https://ilenia.link3rs.com/health
 
 # Test backend API
 curl https://ilenia.link3rs.com/api/live/health
+
+# Test auth service
+curl https://ilenia.link3rs.com/api/auth/health
 
 # Test Events API
 curl https://ilenia.link3rs.com/api/live/events
@@ -264,11 +289,13 @@ Make sure these services are running:
 # Check all containers
 docker compose ps
 
-# Expected containers in Phase 1:
-# - ilenia-redis        (Redis for session state)
-# - ilenia-nginx        (Reverse proxy)
-# - ilenia-frontend     (React app)
-# - ilenia-live-service (STT, MT, Events CRUD)
+# Expected containers in Phase 2:
+# - ilenia-redis            (Redis for session state)
+# - ilenia-nginx            (Reverse proxy)
+# - ilenia-frontend         (React app)
+# - ilenia-live-service     (STT, MT, Events CRUD)
+# - ilenia-auth-service     (Authentication & JWT)
+# - ilenia-auth-keys-init   (Init container - exits after setup)
 
 # Check Redis
 docker exec ilenia-redis redis-cli ping
@@ -280,11 +307,20 @@ docker logs ilenia-live-service --tail 10
 ### Service Dependencies
 
 ```
+auth-keys-init
+    └─ (runs once to fix volume ownership)
+
+auth-service
+    └─ depends_on: auth-keys-init (completed)
+
+
 live-service
     └─ depends_on: redis (healthy)
 
 nginx
-    └─ depends_on: react-frontend, live-service
+
+    └─ depends_on: react-frontend, live-service, auth-service
+
 ```
 
 ### Frontend Environment Variables
@@ -547,6 +583,77 @@ docker compose up -d --force-recreate live-service
 curl https://ilenia.link3rs.com/api/live/events
 ```
 
+### Auth Service Returns 500 on Login
+
+**Cause**: Permission denied writing JWT keys to `/app/keys/private.pem`
+
+**Root Issue**: The `auth-service` container runs as non-root user (`appuser`, uid `10001`) for security, but Docker volumes are created with root ownership by default. When the service tries to generate RSA keys for JWT signing on first login, it fails with `PermissionError`.
+
+**Solution (Automatic)**: The `docker-compose.yml` includes an **init container** (`auth-keys-init`) that automatically fixes volume ownership before `auth-service` starts:
+
+```yaml
+auth-keys-init:
+  image: alpine:3.20
+  container_name: ilenia-auth-keys-init
+  restart: "no"
+  user: "0:0"
+  volumes:
+    - auth-keys:/app/keys
+  command: ["sh", "-lc", "mkdir -p /app/keys && chown -R 10001:10001 /app/keys"]
+
+auth-service:
+  depends_on:
+    auth-keys-init:
+      condition: service_completed_successfully
+```
+
+**How it works**:
+1. `auth-keys-init` runs **once** as root
+2. Creates `/app/keys` directory and sets ownership to `10001:10001` (appuser)
+3. Exits successfully
+4. `auth-service` starts only after init completes
+5. `auth-service` can now write JWT keys without permission errors
+
+**Verification**:
+```bash
+# Check init container completed successfully
+docker compose ps auth-keys-init
+# Should show: Exit 0
+
+# Check auth-service is healthy
+docker compose ps auth-service
+# Should show: Up (healthy)
+
+# Test login endpoint (should return 401 for invalid credentials, not 500)
+curl -i https://ilenia.link3rs.com/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"test@example.com","password":"test"}'
+# Expected: HTTP/2 401 (Unauthorized) - NOT 500
+
+# Check auth-service logs for permission errors
+docker logs ilenia-auth-service --tail 50
+# Should NOT see: PermissionError: [Errno 13] Permission denied: '/app/keys/private.pem'
+```
+
+**Manual Fix (if needed)**:
+If you deployed without the init container, fix manually:
+```bash
+cd ~/ilenia-deployment
+
+# Fix volume ownership manually
+docker run --rm -v ilenia-deployment_auth-keys:/app/keys alpine \
+  sh -c "mkdir -p /app/keys && chown -R 10001:10001 /app/keys"
+
+# Restart auth-service
+docker compose restart auth-service
+
+# Verify
+docker logs ilenia-auth-service --tail 20
+```
+
+**Security Note**: This approach allows `auth-service` to run as non-root (secure) while still being able to generate and persist JWT signing keys. The keys are stored in the `auth-keys` volume and persist across container restarts.
+
+
 ## 🔐 Security
 
 ### Firewall Configuration
@@ -600,7 +707,9 @@ All responses include:
 6. **Test before deploy**: Always test configuration with `nginx -t`
 7. **Use staging**: Test changes on a staging environment first
 
-## 📦 Docker Volumes (Phase 1)
+
+## 📦 Docker Volumes 
+
 
 | Volume | Container | Purpose |
 |--------|-----------|---------|
@@ -610,6 +719,8 @@ All responses include:
 | `live-logs` | ilenia-live-service | Application logs |
 | `nginx-logs` | ilenia-nginx | Access and error logs |
 | `certbot-webroot` | ilenia-nginx | Let's Encrypt challenges |
+| `auth-keys` | ilenia-auth-service | JWT signing keys (RSA private/public) |
+
 
 ### Backup Data
 
