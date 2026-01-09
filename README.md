@@ -31,6 +31,7 @@ ilenia.link3rs.com (Nginx on ports 80/443)
 ### Phase 3 (Future)
 
 ```
+
     ├─ /api/events/*              → event-service (PostgreSQL persistence)
 ```
 
@@ -81,9 +82,11 @@ Redis data is stored in a Docker volume (`redis-data`) and persists across conta
 - `https://ilenia.link3rs.com/api/live/events/{id}` → Event by ID (GET, PUT, DELETE)
 - `https://ilenia.link3rs.com/api/live/events/{id}/channels` → Channel operations
 - `https://ilenia.link3rs.com/api/live/sessions` → Live service sessions
+
 - `https://ilenia.link3rs.com/api/auth/login` → User authentication
 - `https://ilenia.link3rs.com/api/auth/register` → User registration
 - `https://ilenia.link3rs.com/api/auth/health` → Auth service health
+
 
 ### WebSockets
 - `wss://ilenia.link3rs.com/ws/live/v2/captions` → Captions WebSocket
@@ -183,6 +186,7 @@ docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
 # Download docker-compose.yml (Phase 2 - with auth service)
 wget https://raw.githubusercontent.com/link3rs/ilenia-nginx/main/docker-compose.yml -O docker-compose.yml
 
+
 # Create .env file with your configuration
 cat > .env <<EOF
 # HuggingFace Endpoints (configured via frontend Settings modal)
@@ -216,6 +220,7 @@ docker compose up -d
 
 # Verify all containers are running
 # Expected: redis, nginx, react-frontend, live-service, auth-service, auth-keys-init (completed)
+
 docker compose ps
 ```
 
@@ -308,11 +313,14 @@ auth-keys-init
 auth-service
     └─ depends_on: auth-keys-init (completed)
 
+
 live-service
     └─ depends_on: redis (healthy)
 
 nginx
+
     └─ depends_on: react-frontend, live-service, auth-service
+
 ```
 
 ### Frontend Environment Variables
@@ -645,6 +653,7 @@ docker logs ilenia-auth-service --tail 20
 
 **Security Note**: This approach allows `auth-service` to run as non-root (secure) while still being able to generate and persist JWT signing keys. The keys are stored in the `auth-keys` volume and persist across container restarts.
 
+
 ## 🔐 Security
 
 ### Firewall Configuration
@@ -698,7 +707,9 @@ All responses include:
 6. **Test before deploy**: Always test configuration with `nginx -t`
 7. **Use staging**: Test changes on a staging environment first
 
-## 📦 Docker Volumes (Phase 2)
+
+## 📦 Docker Volumes 
+
 
 | Volume | Container | Purpose |
 |--------|-----------|---------|
@@ -709,6 +720,7 @@ All responses include:
 | `nginx-logs` | ilenia-nginx | Access and error logs |
 | `certbot-webroot` | ilenia-nginx | Let's Encrypt challenges |
 | `auth-keys` | ilenia-auth-service | JWT signing keys (RSA private/public) |
+
 
 ### Backup Data
 
