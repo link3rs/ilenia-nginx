@@ -135,11 +135,15 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
+# ============================================
+# Networks
+# ============================================
 networks:
   ilenia-net:
     driver: bridge
-
+# ============================================
+# Volumes
+# ============================================
 volumes:
   certbot-webroot:
   nginx-logs:

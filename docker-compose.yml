@@ -1,7 +1,10 @@
 version: "3.9"
 
-# Ilenia Production Stack for DigitalOcean Droplet
+# Ilenia Production Stack for DigitalOcean Droplet v2.1.1
 # All services from GHCR with Nginx as reverse proxy
+#
+# Phase 1: Redis for session state + Events CRUD in live-service (JSON persistence)
+# Phase 2: event-service + Managed PostgreSQL (future)
 #
 # Usage:
 #   docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
@@ -11,15 +14,42 @@ version: "3.9"
 # Services:
 #   - nginx:          Reverse proxy with SSL (ports 80, 443)
 #   - react-frontend: React SPA (internal port 80)
-#   - live-service:   Live event service (internal port 8082)
 #   - auth-service:   Authentication service (internal port 8081)
+#   - live-service:   Live event service (internal port 8082)
+
 
 services:
+  # ============================================
+  # Redis - Session State & Cache
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: ilenia-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ilenia-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ============================================
   # Nginx Reverse Proxy
   # ============================================
   nginx:
-    image: ghcr.io/link3rs/ilenia-nginx:develop
+    image: ghcr.io/link3rs/ilenia-nginx:main
     container_name: ilenia-nginx
     restart: unless-stopped
     ports:
@@ -53,7 +83,7 @@ services:
   # React Frontend
   # ============================================
   react-frontend:
-    image: ghcr.io/link3rs/ilenia-react-frontend:develop
+    image: ghcr.io/link3rs/ilenia-react-frontend:main
     container_name: ilenia-frontend
     restart: unless-stopped
     expose:
@@ -79,36 +109,40 @@ services:
   # Live Event Service (STT, MT, TTS)
   # ============================================
   live-service:
-    image: ghcr.io/link3rs/ilenia-live-event-service:develop
+    image: ghcr.io/link3rs/ilenia-live-event-service:main
     container_name: ilenia-live-service
     restart: unless-stopped
     expose:
       - "8082"
     environment:
-      # Environment
       - ENV=production
       - APP_HOST=0.0.0.0
       - APP_PORT=8082
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      
-      # HuggingFace Services (required)
       - HF_ASR_URL=${HF_ASR_URL}
       - HF_ASR_TOKEN=${HF_ASR_TOKEN}
       - HF_MT_URL=${HF_MT_URL}
       - HF_MT_TOKEN=${HF_MT_TOKEN}
-      
-      # VAD Configuration (optional)
       - ASR_RMS_SPEECH_THRESHOLD=${ASR_RMS_SPEECH_THRESHOLD:-0.003}
       - ASR_MIN_SPEECH_DURATION_MS=${ASR_MIN_SPEECH_DURATION_MS:-300}
       - ASR_MIN_SILENCE_DURATION_MS=${ASR_MIN_SILENCE_DURATION_MS:-500}
       - ASR_SPEECH_PAD_MS=${ASR_SPEECH_PAD_MS:-400}
+      # Redis configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # Events persistence (Phase 1: JSON file, Phase 2: PostgreSQL via event-service)
+      - EVENTS_STORAGE_PATH=/app/data/events.json
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - live-recordings:/app/recordings
       - live-logs:/app/logs
+      - live-data:/app/data
     networks:
       - ilenia-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8082/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -123,21 +157,32 @@ services:
   # Auth Service
   # ============================================
   auth-service:
-    image: ghcr.io/link3rs/ilenia-auth-service:develop
+    image: ghcr.io/link3rs/ilenia-auth-service:main
     container_name: ilenia-auth-service
     restart: unless-stopped
     expose:
       - "8081"
     environment:
-      - NODE_ENV=production
+      - ENV=production
       - PORT=8081
-      # Add your auth service environment variables here
-      # - JWT_SECRET=${JWT_SECRET}
-      # - DB_URL=${DB_URL}
+      # JWT/Auth configuration
+      - AUTH_ISSUER=${AUTH_ISSUER:-https://auth.ilenia.link3rs.com}
+      - AUTH_AUDIENCE=event-service,livekit-service,live-event-service
+      - ACCESS_TTL_SECONDS=${ACCESS_TTL_SECONDS:-3600}
+      - KEYS_DIR=/app/keys
+      # Admin seed user
+      - AUTH_SEED_ADMIN_EMAIL=${AUTH_SEED_ADMIN_EMAIL}
+      - AUTH_SEED_ADMIN_PASSWORD=${AUTH_SEED_ADMIN_PASSWORD}
+      - AUTH_SEED_ADMIN_NAME=${AUTH_SEED_ADMIN_NAME:-Admin}
+      - AUTH_SEED_ADMIN_LANG=${AUTH_SEED_ADMIN_LANG:-en}
+      # Database (if using PostgreSQL)
+      # - DATABASE_URL=${AUTH_DATABASE_URL}
+    volumes:
+      - auth-keys:/app/keys
     networks:
       - ilenia-net
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -163,3 +208,6 @@ volumes:
   nginx-logs:
   live-recordings:
   live-logs:
+  live-data:
+  redis-data:
+  auth-keys:
