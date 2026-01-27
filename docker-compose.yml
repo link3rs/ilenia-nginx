@@ -1,10 +1,7 @@
 version: "3.9"
 
-# Ilenia Production Stack for DigitalOcean Droplet v2.1.1
+# Ilenia Production Stack for DigitalOcean Droplet v2.2.0
 # All services from GHCR with Nginx as reverse proxy
-#
-# Phase 1: Redis for session state + Events CRUD in live-service (JSON persistence)
-# Phase 2: event-service + Managed PostgreSQL (future)
 #
 # Usage:
 #   docker login ghcr.io -u YOUR_GITHUB_USERNAME -p YOUR_GITHUB_TOKEN
@@ -16,6 +13,7 @@ version: "3.9"
 #   - react-frontend: React SPA (internal port 80)
 #   - auth-service:   Authentication service (internal port 8081)
 #   - live-service:   Live event service (internal port 8082)
+#   - event-service:  Event management service (internal port 8083)
 
 
 services:
@@ -65,6 +63,7 @@ services:
       - react-frontend
       - live-service
       - auth-service
+      - event-service
     networks:
       - ilenia-net
     healthcheck:
@@ -210,6 +209,47 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ============================================
+  # Event Service (Events CRUD API)
+  # ============================================
+  event-service:
+    image: ghcr.io/link3rs/ilenia-events-service:develop
+    container_name: ilenia-event-service
+    restart: unless-stopped
+    expose:
+      - "8083"
+    environment:
+      - ENV=production
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8083
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # CORS - allowed origins
+      - ALLOWED_ORIGINS=["https://ilenia.link3rs.com"]
+      # JWT validation (uses auth-service JWKS)
+      - AUTH_JWKS_URL=http://auth-service:8081/.well-known/jwks.json
+      - AUTH_ISSUER=${AUTH_ISSUER:-https://auth.ilenia.link3rs.com}
+      - AUTH_AUDIENCE=event-service
+      # Events persistence (JSON file)
+      - EVENTS_STORAGE_PATH=/app/data/events.json
+    depends_on:
+      auth-service:
+        condition: service_healthy
+    volumes:
+      - event-data:/app/data
+    networks:
+      - ilenia-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/v1/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 # ============================================
 # Networks
 # ============================================
@@ -228,3 +268,4 @@ volumes:
   live-data:
   redis-data:
   auth-keys:
+  event-data:
