@@ -78,14 +78,12 @@ Redis data is stored in a Docker volume (`redis-data`) and persists across conta
 
 ### REST APIs
 - `https://ilenia.link3rs.com/api/live/health` → Live service health
-- `https://ilenia.link3rs.com/api/live/events` → Events CRUD (GET, POST)
-- `https://ilenia.link3rs.com/api/live/events/{id}` → Event by ID (GET, PUT, DELETE)
-- `https://ilenia.link3rs.com/api/live/events/{id}/channels` → Channel operations
-- `https://ilenia.link3rs.com/api/live/sessions` → Live service sessions
-
-- `https://ilenia.link3rs.com/api/auth/login` → User authentication
-- `https://ilenia.link3rs.com/api/auth/register` → User registration
-- `https://ilenia.link3rs.com/api/auth/health` → Auth service health
+- `https://ilenia.link3rs.com/api/event/v1/events` → Events CRUD (GET, POST)
+- `https://ilenia.link3rs.com/api/event/v1/events/{id}` → Event by ID (GET, PUT, DELETE)
+- `https://ilenia.link3rs.com/api/event/v1/events/{id}/channels` → Channel operations
+- `https://ilenia.link3rs.com/api/auth/v2/login` → User authentication
+- `https://ilenia.link3rs.com/api/auth/v2/register` → User registration
+- `https://ilenia.link3rs.com/api/auth/v2 /health` → Auth service health
 
 
 ### WebSockets
@@ -208,7 +206,7 @@ ASR_SPEECH_PAD_MS=400
 # Auth Service Configuration
 AUTH_ISSUER=https://auth.ilenia.link3rs.com
 ACCESS_TTL_SECONDS=3600
-AUTH_SEED_ADMIN_EMAIL=admin@ilenia.link3rs.com
+AUTH_SEED_ADMIN_EMAIL=admin@ilenia.com
 AUTH_SEED_ADMIN_PASSWORD=your_secure_password_here
 AUTH_SEED_ADMIN_NAME=Admin
 AUTH_SEED_ADMIN_LANG=en
@@ -332,6 +330,7 @@ Update your React `.env` file:
 VITE_BACKEND_URL=https://ilenia.link3rs.com/api/live
 VITE_WS_URL=wss://ilenia.link3rs.com/ws/live
 VITE_AUTH_URL=https://ilenia.link3rs.com/api/auth
+VITE_EVENT_URL=https://ilenia.link3rs.com/api/event
 ```
 
 ## 🧪 Testing

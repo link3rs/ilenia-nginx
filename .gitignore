@@ -1,0 +1,39 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local docker-compose overrides (common pattern)
+docker-compose.override.yml
+docker-compose.override.yaml
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs / runtime artifacts
+*.log
+logs/
+*.pid
+
+# Nginx runtime/log dirs (if created locally)
+nginx/logs/
+nginx/cache/
+nginx/tmp/
+
+# Certificates / ACME (ONLY if you ever create these in-repo)
+letsencrypt/
+certbot/
+ssl/
+*.pem
+*.key
+*.crt
+*.csr
