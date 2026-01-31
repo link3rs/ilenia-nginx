@@ -86,6 +86,11 @@ Redis data is stored in a Docker volume (`redis-data`) and persists across conta
 - `https://ilenia.link3rs.com/api/auth/v2 /health` → Auth service health
 
 
+- `https://ilenia.link3rs.com/api/auth/login` → User authentication
+- `https://ilenia.link3rs.com/api/auth/register` → User registration
+- `https://ilenia.link3rs.com/api/auth/health` → Auth service health
+
+
 ### WebSockets
 - `wss://ilenia.link3rs.com/ws/live/v2/captions` → Captions WebSocket
 - `wss://ilenia.link3rs.com/ws/live/v2/speaker/{session_id}` → Speaker WebSocket
