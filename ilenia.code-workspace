@@ -1,0 +1,46 @@
+{
+	"folders": [
+		{
+			"path": "/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-live-event-service"
+		},
+		{
+			"path": "/Users/link3rs/Developer/JSWorkshop/github.com/link3rs/ilenia-react-frontend"
+		},
+		{
+			"path": "/Users/link3rs/Developer/NginxWorkshop/github.com/link3rs/ilenia-nginx"
+		},
+		{
+			"path": "/Users/link3rs/Developer/SpecsWorkshop/github.com/link3rs/ilenia-apis-specs"
+		},
+		{
+			"path": "/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-auth-service"
+		},
+		{
+			"path": "/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-livekit-provider"
+		},
+		{
+			"path": "/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-events-service"
+		},
+		{
+			"path": "../../../../PythonWorkshop/github.com/link3rs/Ilenia-live-service"
+		}
+	],
+	"settings": {
+		"Claude Code.respectGitIgnore": true,
+		"editor.fontSize": 16,
+		"workbench.colorCustomizations": {
+			"titleBar.activeBackground": "#006666",
+			"titleBar.inactiveBackground": "#003333",
+			"activityBar.background": "#006666",
+			"activityBarBadge.background": "#009999",
+			"sideBar.border": "#006666",
+			"editorGroupHeader.tabsBackground": "#003333",
+			"tab.activeBorderTop": "#00ffff",
+			"statusBar.background": "#006666",
+			"statusBar.noFolderBackground": "#006666",
+			"statusBar.debuggingBackground": "#009999",
+			"statusBar.border": "#003333",
+			"titleBar.border": "#003333"
+		}
+	}
+}
