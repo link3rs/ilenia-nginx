@@ -10,27 +10,27 @@ Plataforma de eventos en vivo con transcripción automática (STT), traducción 
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│                            Internet                                    │
+│                            Internet                                   │
 └──────────────────────────────┬────────────────────────────────────────┘
                                │
                                ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                      Nginx Reverse Proxy                               │
-│                     (SSL/TLS, Rate Limiting)                           │
-│                     ilenia.link3rs.com:443                             │
+│                      Nginx Reverse Proxy                              │
+│                     (SSL/TLS, Rate Limiting)                          │
+│                     ilenia.link3rs.com:443                            │
 └───┬──────────┬──────────┬──────────┬──────────┬──────────┬────────────┘
     │          │          │          │          │          │
     │          │          │          │          │          │
-┌───▼────┐ ┌──▼──────┐┌──▼──────┐┌──▼──────┐┌──▼─────┐┌──▼──────────┐
-│ React  │ │LiveEvent││  Live   ││  Auth   ││ Events ││  LiveKit    │
-│Frontend│ │ Service ││ Service ││ Service ││Service ││  Provider   │
-│  (SPA) │ │WebSocket││LiveKit/ ││  (JWT)  ││(Postgres│  (WebRTC)   │
-│        │ │ (LEGACY)││ Agents  ││         ││  CRUD) │             │
-│  :5173 │ │  :8082  ││  :8092  ││  :8081  ││  :8083 ││   :8086     │
-└────────┘ └────┬────┘└────┬────┘└─────────┘└────────┘└──────┬──────┘
+┌───▼────┐ ┌───▼─────┐┌───▼─────┐┌───▼─────┐┌───▼─────┐┌───▼─────────┐
+│ React  │ │LiveEvent││  Live   ││  Auth   ││ Events  ││  LiveKit    │
+│Frontend│ │ Service ││ Service ││ Service ││Service  ││  Provider   │
+│  (SPA) │ │WebSocket││LiveKit/ ││  (JWT)  ││(Postgres││  (WebRTC)   │
+│        │ │ (LEGACY)││ Agents  ││         ││  CRUD)  ││             │
+│  :5173 │ │  :8082  ││  :8092  ││  :8081  ││  :8083  ││   :8086     │
+└────────┘ └────┬────┘└────┬────┘└─────────┘└─────────┘└──────┬──────┘
                 │          │                                  │
                 │          │                                  │
-         ┌──────┴──────────┴──────────────┐          ┌───────▼───────┐
+         ┌──────┴──────────┴──────────────┐          ┌────────▼──────┐
          │                                │          │               │
     ┌────▼─────┐                    ┌─────▼──────┐   │  LiveKit      │
     │  Redis   │                    │ HuggingFace│   │  Server       │
