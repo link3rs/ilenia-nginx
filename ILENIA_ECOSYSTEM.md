@@ -10,27 +10,27 @@ Plataforma de eventos en vivo con transcripción automática (STT), traducción 
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│                            Internet                                    │
+│                            Internet                                   │
 └──────────────────────────────┬────────────────────────────────────────┘
                                │
                                ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                      Nginx Reverse Proxy                               │
-│                     (SSL/TLS, Rate Limiting)                           │
-│                     ilenia.link3rs.com:443                             │
+│                      Nginx Reverse Proxy                              │
+│                     (SSL/TLS, Rate Limiting)                          │
+│                     ilenia.link3rs.com:443                            │
 └───┬──────────┬──────────┬──────────┬──────────┬──────────┬────────────┘
     │          │          │          │          │          │
     │          │          │          │          │          │
-┌───▼────┐ ┌──▼──────┐┌──▼──────┐┌──▼──────┐┌──▼─────┐┌──▼──────────┐
-│ React  │ │LiveEvent││  Live   ││  Auth   ││ Events ││  LiveKit    │
-│Frontend│ │ Service ││ Service ││ Service ││Service ││  Provider   │
-│  (SPA) │ │WebSocket││LiveKit/ ││  (JWT)  ││(Postgres│  (WebRTC)   │
-│        │ │ (LEGACY)││ Agents  ││         ││  CRUD) │             │
-│  :5173 │ │  :8082  ││  :8092  ││  :8081  ││  :8083 ││   :8086     │
-└────────┘ └────┬────┘└────┬────┘└─────────┘└────────┘└──────┬──────┘
+┌───▼────┐ ┌───▼─────┐┌───▼─────┐┌───▼─────┐┌───▼─────┐┌───▼─────────┐
+│ React  │ │LiveEvent││  Live   ││  Auth   ││ Events  ││  LiveKit    │
+│Frontend│ │ Service ││ Service ││ Service ││Service  ││  Provider   │
+│  (SPA) │ │WebSocket││LiveKit/ ││  (JWT)  ││(Postgres││  (WebRTC)   │
+│        │ │ (LEGACY)││ Agents  ││         ││  CRUD)  ││             │
+│  :5173 │ │  :8082  ││  :8092  ││  :8081  ││  :8083  ││   :8086     │
+└────────┘ └────┬────┘└────┬────┘└─────────┘└─────────┘└──────┬──────┘
                 │          │                                  │
                 │          │                                  │
-         ┌──────┴──────────┴──────────────┐          ┌───────▼───────┐
+         ┌──────┴──────────┴──────────────┐          ┌────────▼──────┐
          │                                │          │               │
     ┌────▼─────┐                    ┌─────▼──────┐   │  LiveKit      │
     │  Redis   │                    │ HuggingFace│   │  Server       │
@@ -62,17 +62,32 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 
 ### 2. Auth Service (`ilenia-auth-service`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-auth-service`
-**Tecnología**: Python, FastAPI, PostgreSQL, JWT (RS256)
+**Tecnología**: Python, FastAPI, PostgreSQL 16, JWT (RS256), SQLAlchemy 2.0, Alembic
 **Puerto**: 8081
 **Función**:
 - Autenticación y autorización centralizada
 - Emisión de JWT con firma RSA (RS256)
-- Gestión de usuarios, roles y permisos
+- **Modelo híbrido RBAC**: User N:M Role + Custom Permissions (add/remove)
+- Roles como templates con permisos por defecto
+- Custom permissions: añadir/quitar permisos específicos sobre los del rol
+- Auditoría completa (granted_by, granted_at en custom_permissions)
 - Refresh tokens con HttpOnly cookies
 - **OAuth2 client credentials (S2S)** - Para `ilenia-live-service`
 - JWKS endpoint para verificación de tokens
+- **Migraciones Alembic** como única fuente de verdad
 
-**Estado**: ✅ Operativo
+**Arquitectura RBAC**:
+- Usuarios pueden tener múltiples roles
+- Roles definen permisos por defecto (templates)
+- Custom permissions para añadir/quitar permisos sin cambiar roles
+- Flexibilidad total con auditoría completa
+
+**Base de Datos**:
+- PostgreSQL 16 con SQLAlchemy 2.0 async
+- Migraciones Alembic (única fuente de verdad)
+- Flujo: OpenAPI Spec → DTOs → SQLAlchemy Models → Alembic → PostgreSQL
+
+**Estado**: ✅ Operativo (v2.3.0)
  
 ### 3 Live Event Service - WebSocket (LEGACY) (`ilenia-live-event-service`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-live-event-service`
@@ -159,6 +174,62 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 - Estado de WebSocket connections
 - Subtítulos en tiempo real
 - Persistencia AOF
+
+### 9. PostgreSQL (Base de Datos)
+**Container**: `ilenia-postgres`
+**Puerto**: 5432 (interno)
+**Tecnología**: PostgreSQL 16, SQLAlchemy 2.0, Alembic
+
+#### Arquitectura de BD (Microservicios)
+**Opción implementada**: 1 clúster PostgreSQL, 2 bases de datos, 2 usuarios
+
+**Estructura**:
+- Un único contenedor PostgreSQL (un clúster)
+- Dos bases de datos independientes:
+  - `ilenia_auth` → Usuarios, roles, permisos
+  - `ilenia_events` → Eventos, canales, asignaciones
+- Un usuario por servicio con permisos solo sobre su DB:
+  - `ilenia_auth_user` → DB `ilenia_auth`
+  - `ilenia_events_user` → DB `ilenia_events`
+
+**Ventajas**:
+- ✅ Aislamiento real (menos acoplamiento invisible que con schemas)
+- ✅ Backups/restore por DB independientes
+- ✅ Rotación de credenciales por servicio
+- ✅ Permisos más limpios y seguros
+- ✅ Cada servicio lleva sus migraciones (Alembic) sin pisarse
+
+#### Stack de Persistencia
+**ORM y Migraciones**: SQLAlchemy 2.0 + Alembic
+- **ORM**: SQLAlchemy 2.0 (estilo tipado `Mapped[]`, `mapped_column`, `DeclarativeBase`)
+- **Driver async**: `asyncpg` + `sqlalchemy[asyncio]`
+- **Migraciones**: Alembic (cada servicio con su `alembic.ini` y `versions/`)
+- **Schemas**: Pydantic v2 para request/response (separados de modelos ORM)
+
+**Beneficios**:
+- Control fino de transacciones, constraints, índices, locks
+- Migrations maduras (offline/online)
+- Fácil separar por servicio
+- Estándar de facto en producción Python
+
+#### Preparación para Managed PostgreSQL (Digital Ocean, AWS RDS, etc.)
+**Principios de diseño**:
+1. ✅ **No acoplar a Postgres local**: Todo por env vars (`host/port/db/user/pass/sslmode`)
+2. ✅ **Alembic como única fuente de verdad** del esquema
+3. ✅ **Evitar features que rompen en managed**:
+   - Extensiones no estándar
+   - Funciones que leen/escriben archivos del SO
+   - Jobs que asumen acceso al SO del DB server
+4. ✅ **Probar dump/restore temprano** para detectar sorpresas
+
+**Variables de entorno**:
+```bash
+# Auth Service
+DATABASE_URL=postgresql+asyncpg://ilenia_auth_user:password@postgres:5432/ilenia_auth
+
+# Events Service
+DATABASE_URL=postgresql+asyncpg://ilenia_events_user:password@postgres:5432/ilenia_events
+```
 
 ## Flujos del Sistema
 
@@ -366,7 +437,7 @@ HF_MT_TOKEN=hf_your_token_here
 
 ### Auth Service
 ```bash
-AUTH_ISSUER=https://auth.ilenia.link3rs.com
+AUTH_ISSUER=https://ilenia.link3rs.com
 AUTH_AUDIENCE=event-service,livekit-service,live-service
 ACCESS_TTL_SECONDS=3600
 REFRESH_TTL_SECONDS=2592000

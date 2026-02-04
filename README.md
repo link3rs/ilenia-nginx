@@ -86,6 +86,11 @@ Redis data is stored in a Docker volume (`redis-data`) and persists across conta
 - `https://ilenia.link3rs.com/api/auth/v2 /health` → Auth service health
 
 
+- `https://ilenia.link3rs.com/api/auth/login` → User authentication
+- `https://ilenia.link3rs.com/api/auth/register` → User registration
+- `https://ilenia.link3rs.com/api/auth/health` → Auth service health
+
+
 ### WebSockets
 - `wss://ilenia.link3rs.com/ws/live/v2/captions` → Captions WebSocket
 - `wss://ilenia.link3rs.com/ws/live/v2/speaker/{session_id}` → Speaker WebSocket
@@ -204,7 +209,7 @@ ASR_MIN_SILENCE_DURATION_MS=500
 ASR_SPEECH_PAD_MS=400
 
 # Auth Service Configuration
-AUTH_ISSUER=https://auth.ilenia.link3rs.com
+AUTH_ISSUER=https://ilenia.link3rs.com
 ACCESS_TTL_SECONDS=3600
 AUTH_SEED_ADMIN_EMAIL=admin@ilenia.com
 AUTH_SEED_ADMIN_PASSWORD=your_secure_password_here
