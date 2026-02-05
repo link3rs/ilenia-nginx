@@ -1,4 +1,5 @@
-# Ilenia Local Development Stack v2.2.0
+# Ilenia Local Development Stack v3.0.0
+
 # Backend services only - run frontend locally with `npm run dev`
 #
 # Usage:
@@ -10,11 +11,47 @@
 #   cd ilenia-react-frontend && npm run dev
 #
 # Services exposed:
-#   - auth-service:  http://localhost:8081
-#   - live-service:  http://localhost:8082
-#   - event-service: http://localhost:8083
+#   - postgres:       localhost:5432
+#   - auth-service:   http://localhost:8081
+#   - live-service:   http://localhost:8082
+#   - event-service:  http://localhost:8083
+#
+# Images:
+#   - All services use :develop tag from GHCR
+#   - PostgreSQL with Alembic migrations for auth-service
+#   - PostgreSQL ready for event-service (to be implemented)
 
 services:
+  # ============================================
+  # PostgreSQL - Primary Database
+  # ============================================
+  # Creates two databases:
+  #   - ilenia_auth (user: ilenia_auth_user) - Managed by Alembic
+  #   - ilenia_events (user: ilenia_events_user) - Ready for migrations
+  postgres:
+    image: postgres:16-alpine
+    container_name: ilenia-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=ilenia_admin
+      - POSTGRES_PASSWORD=${POSTGRES_ADMIN_PASSWORD:-ilenia_admin_secret}
+      - POSTGRES_DB=postgres
+      - POSTGRES_AUTH_PASSWORD=${POSTGRES_AUTH_PASSWORD:-auth_secret}
+      - POSTGRES_EVENTS_PASSWORD=${POSTGRES_EVENTS_PASSWORD:-events_secret}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+    networks:
+      - ilenia-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ilenia_admin -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # ============================================
   # Redis - Session State & Cache
   # ============================================
@@ -40,7 +77,7 @@ services:
   # Live Event Service (STT, MT, TTS)
   # ============================================
   live-service:
-    image: ghcr.io/link3rs/ilenia-live-event-service:main
+    image: ghcr.io/link3rs/ilenia-live-event-service:develop
     container_name: ilenia-live-service
     restart: unless-stopped
     ports:
@@ -93,45 +130,58 @@ services:
       - ilenia-net
 
   # ============================================
-  # Auth Service
+  # Auth Service (v3.0.0 with Alembic)
   # ============================================
   auth-service:
-    image: ghcr.io/link3rs/ilenia-auth-service:main
+    image: ghcr.io/link3rs/ilenia-auth-service:develop
     container_name: ilenia-auth-service
     restart: unless-stopped
     depends_on:
       auth-keys-init:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     ports:
       - "8081:8081"
     environment:
       - ENV=development
       - PORT=8081
-      - AUTH_ISSUER=${AUTH_ISSUER:-http://localhost}
+      # Storage
+      - USE_DATABASE=true
+      - USE_AUTH_MOCK=false
+      # Database (Alembic migrations run automatically)
+      - DATABASE_URL=postgresql+asyncpg://ilenia_auth_user:${POSTGRES_AUTH_PASSWORD:-auth_secret}@postgres:5432/ilenia_auth
+      # JWT Configuration
+      - AUTH_ISSUER=${AUTH_ISSUER:-http://localhost:8081/v2}
       - AUTH_AUDIENCE=event-service,livekit-service,live-event-service
       - ACCESS_TTL_SECONDS=${ACCESS_TTL_SECONDS:-3600}
       - KEYS_DIR=/app/keys
-      - AUTH_SEED_ADMIN_EMAIL=${AUTH_SEED_ADMIN_EMAIL:-admin@localhost}
+      # Seed Admin User
+      - AUTH_SEED_ADMIN_EMAIL=${AUTH_SEED_ADMIN_EMAIL:-admin@ilenia.com}
       - AUTH_SEED_ADMIN_PASSWORD=${AUTH_SEED_ADMIN_PASSWORD:-admin123}
-      - AUTH_SEED_ADMIN_NAME=${AUTH_SEED_ADMIN_NAME:-Admin}
+      - AUTH_SEED_ADMIN_NAME=${AUTH_SEED_ADMIN_NAME:-Default Admin}
       - AUTH_SEED_ADMIN_LANG=${AUTH_SEED_ADMIN_LANG:-en}
-      - ALLOWED_ORIGINS=["http://localhost","http://localhost:5173","http://127.0.0.1","http://127.0.0.1:5173"]
+      # CORS
+      - ALLOWED_ORIGINS=["http://localhost:5173","http://localhost:3000","http://127.0.0.1:5173","http://localhost","http://127.0.0.1"]
     volumes:
       - auth-keys:/app/keys
     networks:
       - ilenia-net
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health').read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/v2/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 20s
+      start_period: 30s
 
   # ============================================
   # Event Service (Events CRUD API)
   # ============================================
+  # Uses GHCR :develop image with JSON storage
+  # PostgreSQL with UUID migration is in progress (not yet in :develop)
+  # Database is ready: ilenia_events (user: ilenia_events_user)
   event-service:
-    image: ghcr.io/link3rs/ilenia-events-service:main
+    image: ghcr.io/link3rs/ilenia-events-service:develop
     container_name: ilenia-event-service
     restart: unless-stopped
     ports:
@@ -141,13 +191,22 @@ services:
       - APP_HOST=0.0.0.0
       - APP_PORT=8083
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-      - ALLOWED_ORIGINS=["http://localhost","http://localhost:5173","http://127.0.0.1","http://127.0.0.1:5173"]
-      - AUTH_SERVICE_URL=http://auth-service:8081
-      - AUTH_ISSUER=${AUTH_ISSUER:-http://localhost}
-      - AUTH_AUDIENCE=event-service
+      # Storage: JSON file (PostgreSQL UUID migration in progress)
+      - USE_DATABASE=false
+      - USE_EVENT_MOCK=false
+      - DATABASE_URL=postgresql+asyncpg://ilenia_events_user:${POSTGRES_EVENTS_PASSWORD:-events_secret}@postgres:5432/ilenia_events
       - EVENTS_STORAGE_PATH=/app/data/events.json
+      # Auth
+      - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
+      - ALLOWED_ORIGINS=["http://localhost","http://localhost:5173","http://127.0.0.1","http://127.0.0.1:5173"]
+      - AUTH_SERVICE_URL=http://auth-service:8081/v2
+      - AUTH_ISSUER=${AUTH_ISSUER:-http://localhost:8081/v2}
+      - AUTH_AUDIENCE=event-service
+      - AUTH_JWKS_URL=${AUTH_JWKS_URL:-http://auth-service:8081/v2/.well-known/jwks.json}
     depends_on:
       auth-service:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     volumes:
       - event-data:/app/data
@@ -171,6 +230,7 @@ networks:
 # Volumes
 # ============================================
 volumes:
+  postgres-data:
   live-recordings:
   live-logs:
   live-data:

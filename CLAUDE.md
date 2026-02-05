@@ -120,9 +120,70 @@ docker exec ilenia-redis redis-cli info | grep used_memory_human
 docker exec ilenia-redis redis-cli keys '*'
 ```
 
+## PostgreSQL
+PostgreSQL se usa para persistencia de datos en:
+- **Auth Service** - Usuarios, roles, permisos (DB: `ilenia_auth`)
+- **Events Service** - Eventos, canales, asignaciones (DB: `ilenia_events`)
+
+### Arquitectura de BD
+- **Opción implementada**: 1 clúster PostgreSQL, 2 bases de datos, 2 usuarios
+- **Container**: `ilenia-postgres`
+- **Puerto**: 5432 (interno)
+- **Tecnología**: PostgreSQL 16, SQLAlchemy 2.0, Alembic
+
+### Estructura
+```
+PostgreSQL Container
+├── ilenia_auth (DB)
+│   └── ilenia_auth_user (owner)
+│       ├── users
+│       ├── roles
+│       ├── permissions
+│       └── oauth_clients
+└── ilenia_events (DB)
+    └── ilenia_events_user (owner)
+        ├── events
+        ├── channels
+        ├── event_speakers
+        └── event_listeners
+```
+
+### Ventajas
+- ✅ Aislamiento real por servicio
+- ✅ Backups/restore independientes
+- ✅ Rotación de credenciales por servicio
+- ✅ Migraciones independientes (Alembic)
+
+### Stack de Persistencia
+- **ORM**: SQLAlchemy 2.0 (async con `asyncpg`)
+- **Migraciones**: Alembic (cada servicio con su `alembic.ini`)
+- **Schemas**: Pydantic v2 (separados de modelos ORM)
+
+### Comandos útiles
+```bash
+# Conectar a auth DB
+docker exec -it ilenia-postgres psql -U ilenia_auth_user -d ilenia_auth
+
+# Conectar a events DB
+docker exec -it ilenia-postgres psql -U ilenia_events_user -d ilenia_events
+
+# Backup
+docker exec ilenia-postgres pg_dump -U ilenia_auth_user ilenia_auth > backup_auth.sql
+docker exec ilenia-postgres pg_dump -U ilenia_events_user ilenia_events > backup_events.sql
+
+# Ver conexiones activas
+docker exec ilenia-postgres psql -U postgres -c "SELECT datname, usename, application_name FROM pg_stat_activity WHERE datname IN ('ilenia_auth', 'ilenia_events');"
+```
+
+Ver documentación detallada:
+- [ILENIA_ECOSYSTEM.md](ILENIA_ECOSYSTEM.md) - Arquitectura completa
+- Auth Service: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-auth-service/POSTGRESQL.md`
+- Events Service: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-events-service/POSTGRESQL.md`
+
 ## Volúmenes Docker
+- `postgres-data` - Persistencia de PostgreSQL
 - `redis-data` - Persistencia de Redis
-- `live-data` - Archivo `events.json` del live service
+- `live-data` - Archivo `events.json` del live service (legacy, migrar a PostgreSQL)
 - `live-recordings` - Grabaciones de audio
 - `live-logs` - Logs de aplicación
 - `nginx-logs` - Logs de Nginx

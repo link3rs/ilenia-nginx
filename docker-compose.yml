@@ -182,7 +182,7 @@ services:
       - ENV=production
       - PORT=8081
       # JWT/Auth configuration
-      - AUTH_ISSUER=${AUTH_ISSUER:-https://auth.ilenia.link3rs.com}
+      - AUTH_ISSUER=${AUTH_ISSUER:-https://ilenia.link3rs.com}
       - AUTH_AUDIENCE=event-service,livekit-service,live-event-service
       - ACCESS_TTL_SECONDS=${ACCESS_TTL_SECONDS:-3600}
       - KEYS_DIR=/app/keys
@@ -227,7 +227,7 @@ services:
       - ALLOWED_ORIGINS=["https://ilenia.link3rs.com"]
       # JWT validation (uses auth-service JWKS)
       - AUTH_SERVICE_URL=http://auth-service:8081
-      - AUTH_ISSUER=${AUTH_ISSUER:-https://auth.ilenia.link3rs.com}
+      - AUTH_ISSUER=${AUTH_ISSUER:-https://ilenia.link3rs.com}
       - AUTH_AUDIENCE=event-service
       # Events persistence (JSON file)
       - EVENTS_STORAGE_PATH=/app/data/events.json

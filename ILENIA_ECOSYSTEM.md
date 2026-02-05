@@ -6,31 +6,243 @@ Plataforma de eventos en vivo con transcripción automática (STT), traducción 
 - **Modo WebSocket** (legacy): Subtítulos vía WebSocket
 - **Modo LiveKit** (nuevo): Audio original + traducciones vía WebRTC
 
+## Patrón de Arquitectura Estándar
+
+### PersistenceProvider Pattern (Recomendado)
+
+Todos los servicios del ecosistema deben seguir el patrón **Strategy + Dependency Injection** para la capa de persistencia, permitiendo múltiples backends sin cambiar la lógica de negocio.
+
+**Arquitectura estándar**:
+```
+┌─────────────────────────────────────────────────────┐
+│              FastAPI Application                    │
+│                                                     │
+│  ┌──────────────────────────────────────────────┐   │
+│  │   get_handler()                              │   │
+│  │   USE_<SERVICE>_MOCK?                        │   │
+│  └──────┬───────────────────────────────────────┘   │
+│         │                                           │
+│    ┌────┴─────┐                                     │
+│    │          │                                     │
+│  Mock       Prod                                    │
+│    │          │                                     │
+│    │    ┌─────┴──────────┐                          │
+│    │    │ Persistence    │                          │
+│    │    │  Provider      │                          │
+│    │    │  (injected)    │                          │
+│    │    └─────┬──────────┘                          │
+│    │          │                                     │
+│    │    ┌─────┴──────┐                              │
+│    │    │            │                              │
+│    │  InMemory   PostgreSQL                         │
+│    │    │            │                              │
+│    │  storage/*  repositories/*                     │
+└────┴────┴────────────┴──────────────────────────────┘
+```
+
+### Estructura de Archivos Estándar
+
+```
+src/
+├── persistence/
+│   ├── __init__.py
+│   ├── base.py              # PersistenceProvider (ABC)
+│   ├── in_memory.py         # PersistenceInMemory
+│   └── postgresql.py        # PersistencePostgreSQL
+├── api_<service>/runtime/
+│   ├── handler_prod.py      # Handler principal (refactorizado con DI)
+│   ├── handler_mock.py      # Handler mock para testing
+│   ├── handlers.py          # Protocol + get_handler() + get_persistence()
+│   └── <service>_server.py  # Carga de implementaciones
+├── db/
+│   ├── models.py            # SQLAlchemy models
+│   ├── database.py          # Async engine y session
+│   └── startup.py           # Lifespan y seed
+├── repositories/           # Para PostgreSQL (async)
+│   ├── <entity>_repo.py
+│   └── ...
+├── storage/                # Para InMemory (legacy)
+│   ├── <entity>_storage.py
+│   └── ...
+├── services/               # Lógica de negocio (opcional)
+└── config.py               # USE_DATABASE + USE_<SERVICE>_MOCK
+```
+
+### Variables de Entorno Estándar
+
+```bash
+# Handler selection
+USE_<SERVICE>_MOCK=false    # true = Mock handler (testing)
+                            # false = Prod handler (production)
+
+# Persistence selection (only for Prod handler)
+USE_DATABASE=false          # true = PostgreSQL (production)
+                            # false = InMemory (development)
+
+# Database configuration
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/<service>_db
+```
+
+### Modos de Operación Estándar
+
+| Modo | USE_<SERVICE>_MOCK | USE_DATABASE | Handler | Persistence | Uso |
+|------|-------------------|--------------|---------|-------------|-----|
+| **Desarrollo** | false | false | Prod | InMemory | Desarrollo sin PostgreSQL |
+| **Producción** | false | true | Prod | PostgreSQL | Producción con persistencia |
+| **Testing** | true | - | Mock | - | Tests unitarios |
+
+### Ventajas del Patrón
+
+1. **Separation of Concerns**: Handler (lógica) vs Persistence (datos)
+2. **Dependency Injection**: Handler recibe Persistence como parámetro
+3. **Strategy Pattern**: Cambiar backend sin cambiar handler
+4. **Testabilidad**: Mock handler para tests, Prod para producción
+5. **DRY**: Un solo handler de producción, múltiples backends
+6. **Flexibilidad**: Fácil agregar Redis, MongoDB, etc.
+7. **Consistencia**: Todos los servicios siguen la misma arquitectura
+
+### Servicios que Implementan el Patrón
+
+- ✅ **ilenia-auth-service** (v3.0.0) - Implementación completa con PostgreSQL
+- 🚧 **ilenia-events-service** - En proceso de implementación
+- ⏳ **ilenia-livekit-provider** - Pendiente de implementar
+- ⏳ **ilenia-live-service** - Pendiente de implementar
+
+## Estrategia de Testing Estándar
+
+### Framework de Testing
+
+Todos los servicios del ecosistema deben usar la misma estrategia de testing:
+
+**Stack de Testing**:
+- **pytest** - Framework de testing principal
+- **httpx.AsyncClient** - Cliente HTTP async para testing de FastAPI
+- **pytest-asyncio** - Soporte para tests asíncronos
+- **pytest-cov** - Coverage reporting (opcional)
+
+### Estructura de Tests Estándar
+
+```
+tests/
+├── conftest.py              # Fixtures compartidas
+├── test_<entity>_crud.py    # Tests CRUD por entidad
+├── test_<feature>.py        # Tests por feature
+└── test_health_api.py       # Tests de health check
+```
+
+### Fixtures Comunes
+
+**conftest.py** debe proporcionar:
+```python
+@pytest_asyncio.fixture
+async def async_client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+    """Async HTTP client para testing."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+def sample_<entity>_data() -> dict:
+    """Datos de ejemplo para testing."""
+    return {...}
+```
+
+### Comandos de Testing Estándar
+
+```bash
+# Ejecutar todos los tests
+pytest
+
+# Tests con verbose
+pytest -v
+
+# Tests específicos
+pytest tests/test_<module>.py
+
+# Con coverage
+pytest --cov=src --cov-report=html
+
+# Tests en paralelo
+pytest -n auto
+```
+
+### Ejemplo de Test Async
+
+```python
+import pytest
+from httpx import AsyncClient
+
+@pytest.mark.asyncio
+async def test_create_entity(async_client: AsyncClient, sample_data: dict):
+    """Test creating a new entity."""
+    response = await async_client.post("/entities", json=sample_data)
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == sample_data["name"]
+    assert "id" in data
+```
+
+### Cobertura de Tests Recomendada
+
+Cada servicio debe tener tests para:
+- ✅ **CRUD completo**: Create, Read, Update, Delete
+- ✅ **Listado con filtros**: Paginación, búsqueda
+- ✅ **Validación**: Casos de error, 404, 400
+- ✅ **Autenticación**: Permisos, ownership
+- ✅ **Integración**: Con otros servicios (mocked)
+- ✅ **Health check**: Endpoint de salud
+
+### Testing con Base de Datos
+
+Para tests de integración con PostgreSQL:
+
+```bash
+# 1. Levantar PostgreSQL de test
+docker-compose -f docker-compose.test.yml up -d
+
+# 2. Aplicar migraciones
+alembic upgrade head
+
+# 3. Ejecutar tests
+USE_DATABASE=true pytest tests/
+
+# 4. Limpiar
+docker-compose -f docker-compose.test.yml down -v
+```
+
+### Servicios con Testing Implementado
+
+- ✅ **ilenia-auth-service** - Tests completos con pytest + httpx
+- ✅ **ilenia-events-service** - Tests CRUD, channels, status lifecycle
+- ⏳ **ilenia-livekit-provider** - Pendiente
+- ⏳ **ilenia-live-service** - Pendiente
+
 ## Arquitectura del Ecosistema
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│                            Internet                                    │
+│                            Internet                                   │
 └──────────────────────────────┬────────────────────────────────────────┘
                                │
                                ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                      Nginx Reverse Proxy                               │
-│                     (SSL/TLS, Rate Limiting)                           │
-│                     ilenia.link3rs.com:443                             │
+│                      Nginx Reverse Proxy                              │
+│                     (SSL/TLS, Rate Limiting)                          │
+│                     ilenia.link3rs.com:443                            │
 └───┬──────────┬──────────┬──────────┬──────────┬──────────┬────────────┘
     │          │          │          │          │          │
     │          │          │          │          │          │
-┌───▼────┐ ┌──▼──────┐┌──▼──────┐┌──▼──────┐┌──▼─────┐┌──▼──────────┐
-│ React  │ │LiveEvent││  Live   ││  Auth   ││ Events ││  LiveKit    │
-│Frontend│ │ Service ││ Service ││ Service ││Service ││  Provider   │
-│  (SPA) │ │WebSocket││LiveKit/ ││  (JWT)  ││(Postgres│  (WebRTC)   │
-│        │ │ (LEGACY)││ Agents  ││         ││  CRUD) │             │
-│  :5173 │ │  :8082  ││  :8092  ││  :8081  ││  :8083 ││   :8086     │
-└────────┘ └────┬────┘└────┬────┘└─────────┘└────────┘└──────┬──────┘
+┌───▼────┐ ┌───▼─────┐┌───▼─────┐┌───▼─────┐┌───▼─────┐┌───▼─────────┐
+│ React  │ │LiveEvent││  Live   ││  Auth   ││ Events  ││  LiveKit    │
+│Frontend│ │ Service ││ Service ││ Service ││Service  ││  Provider   │
+│  (SPA) │ │WebSocket││LiveKit/ ││  (JWT)  ││(Postgres││  (WebRTC)   │
+│        │ │ (LEGACY)││ Agents  ││         ││  CRUD)  ││             │
+│  :5173 │ │  :8082  ││  :8092  ││  :8081  ││  :8083  ││   :8086     │
+└────────┘ └────┬────┘└────┬────┘└─────────┘└─────────┘└──────┬──────┘
                 │          │                                  │
                 │          │                                  │
-         ┌──────┴──────────┴──────────────┐          ┌───────▼───────┐
+         ┌──────┴──────────┴──────────────┐          ┌────────▼──────┐
          │                                │          │               │
     ┌────▼─────┐                    ┌─────▼──────┐   │  LiveKit      │
     │  Redis   │                    │ HuggingFace│   │  Server       │
@@ -62,17 +274,39 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 
 ### 2. Auth Service (`ilenia-auth-service`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-auth-service`
-**Tecnología**: Python, FastAPI, PostgreSQL, JWT (RS256)
+**Tecnología**: Python, FastAPI, PostgreSQL 16, JWT (RS256), SQLAlchemy 2.0, Alembic
 **Puerto**: 8081
+**API version**: v2
+
 **Función**:
 - Autenticación y autorización centralizada
 - Emisión de JWT con firma RSA (RS256)
-- Gestión de usuarios, roles y permisos
+- **Modelo híbrido RBAC**: User N:M Role + Custom Permissions (add/remove)
+- Roles como templates con permisos por defecto
+- Custom permissions: añadir/quitar permisos específicos sobre los del rol
+- Auditoría completa (granted_by, granted_at en custom_permissions)
 - Refresh tokens con HttpOnly cookies
 - **OAuth2 client credentials (S2S)** - Para `ilenia-live-service`
-- JWKS endpoint para verificación de tokens
+- JWKS endpoint para verificación de tokens: `/v2/.well-known/jwks.json`
+- **Migraciones Alembic** como única fuente de verdad
 
-**Estado**: ✅ Operativo
+**Arquitectura**: ✅ **PersistenceProvider Pattern implementado**
+- Handler de producción con Dependency Injection
+- PostgreSQL (producción) + InMemory (desarrollo) + Mock (testing)
+- Variables: `USE_AUTH_MOCK=false`, `USE_DATABASE=true`
+
+**Arquitectura RBAC**:
+- Usuarios pueden tener múltiples roles
+- Roles definen permisos por defecto (templates)
+- Custom permissions para añadir/quitar permisos sin cambiar roles
+- Flexibilidad total con auditoría completa
+
+**Base de Datos**:
+- PostgreSQL 16 con SQLAlchemy 2.0 async
+- Migraciones Alembic (única fuente de verdad)
+- Flujo: OpenAPI Spec → DTOs → SQLAlchemy Models → Alembic → PostgreSQL
+
+**Estado**: ✅ Operativo (v3.0.0)
  
 ### 3 Live Event Service - WebSocket (LEGACY) (`ilenia-live-event-service`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-live-event-service`
@@ -104,21 +338,38 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 
 ## 5. Events Service (`ilenia-events-service`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-events-service`
-**Tecnología**: Python, FastAPI, PostgreSQL, SQLAlchemy
+**Tecnología**: Python, FastAPI, PostgreSQL 16, SQLAlchemy 2.0, Alembic
 **Puerto**: 8083
+**API version**: v1
+
 **Función**:
 - **CRUD persistente de eventos** (PostgreSQL) - Fuente de verdad
 - Gestión completa de metadata: título, descripción, fechas, canales
 - Asignación de speakers y listeners
 - Configuración de idiomas (source/target) por canal
+- Gestión de estado del evento (draft, ready, live, ended)
+- Templates de eventos para reutilización
 - Provee configuración a `ilenia-live-service` y `ilenia-live-event-service`
 
-**Estado**: 🚧 En desarrollo - Asumiendo responsabilidad de CRUD desde `ilenia-live-event-service`
+**Arquitectura**: 🚧 **En proceso de migrar a PersistenceProvider Pattern**
+- Modelos SQLAlchemy 2.0 creados
+- Migraciones Alembic configuradas
+- Pendiente: Refactorizar handlers para usar Dependency Injection
+- Variables planificadas: `USE_EVENT_MOCK`, `USE_DATABASE`
+
+**Base de Datos**:
+- PostgreSQL 16 con SQLAlchemy 2.0 async
+- Migraciones Alembic
+- Docker Compose con PostgreSQL configurado
+
+**Estado**: 🚧 En desarrollo activo - CRUD operativo con PostgreSQL
 
 ## 6. LiveKit Provider (`ilenia-livekit-provider`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-livekit-provider`
 **Tecnología**: Python, FastAPI, LiveKit SDK, WebRTC
 **Puerto**: 8086
+**API version**: v2
+
 **Función**:
 - **Gestión de LiveKit rooms** (crear, cerrar)
 - **Emisión de tokens de acceso**:
@@ -127,6 +378,11 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
   - Tokens de agentes (ASR, MT) - Para `ilenia-live-service`
 - Interfaz con LiveKit Server (Cloud o self-hosted)
 - NO gestiona datos de eventos (delegado a `ilenia-events-service`)
+
+**Arquitectura**: ⏳ **Pendiente migrar a PersistenceProvider Pattern**
+- Actualmente stateless (no persiste datos propios)
+- Evaluación pendiente: ¿Necesita persistencia local para logs/auditoría?
+- Si sí: Implementar PersistenceProvider con PostgreSQL
 
 **Estado**: 🚧 En desarrollo activo
 
@@ -145,11 +401,32 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 **Ubicación**: `/Users/link3rs/Developer/SpecsWorkshop/github.com/link3rs/ilenia-apis-specs`
 **Tecnología**: OpenAPI 3.1, AsyncAPI 3.0, Redocly
 **Función**:
-- Especificaciones de todas las APIs REST
-- Especificaciones de protocolos WebSocket
+- **FUENTE DE VERDAD** para todas las APIs del ecosistema
+- Especificaciones de todas las APIs REST (OpenAPI 3.1)
+- Especificaciones de protocolos WebSocket (AsyncAPI 3.0)
 - Generación de SDKs (Python, TypeScript)
 - Generación de modelos TypeScript para WebSocket
 - Documentación interactiva
+- Validación y bundling de specs
+
+**Flujo de Trabajo para APIs**:
+1. Editar specs en `ilenia-apis-specs`
+2. Validar: `npm run check-{service}`
+3. Copiar bundle al servicio correspondiente
+4. Generar código: `./scripts/generate-openapi-server.sh`
+
+**Repositorios del Ecosistema**:
+
+| Servicio | Repositorio | Directorio local | Puerto |
+|----------|-------------|------------------|--------|
+| Auth | ilenia-auth-service | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-auth-service` | 8081 |
+| Events | ilenia-events-service | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-events-service` | 8083 |
+| LiveKit | ilenia-livekit-provider | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-livekit-provider` | 8086 |
+| Live Event (WS) | ilenia-live-event-service | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-live-event-service` | 8082 |
+| Live (LiveKit) | ilenia-live-service | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-live-service` | 8092 |
+| Frontend | ilenia-react-frontend | `/Users/link3rs/Developer/JSWorkshop/github.com/link3rs/ilenia-react-frontend` | 5173 |
+| Nginx | ilenia-nginx | `/Users/link3rs/Developer/NginxWorkshop/github.com/link3rs/ilenia-nginx` | 80/443 |
+| API Specs | ilenia-apis-specs | `/Users/link3rs/Developer/SpecsWorkshop/github.com/link3rs/ilenia-apis-specs` | - |
 
 ### 8. Redis (Infraestructura)
 **Container**: `ilenia-redis`
@@ -159,6 +436,62 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 - Estado de WebSocket connections
 - Subtítulos en tiempo real
 - Persistencia AOF
+
+### 9. PostgreSQL (Base de Datos)
+**Container**: `ilenia-postgres`
+**Puerto**: 5432 (interno)
+**Tecnología**: PostgreSQL 16, SQLAlchemy 2.0, Alembic
+
+#### Arquitectura de BD (Microservicios)
+**Opción implementada**: 1 clúster PostgreSQL, 2 bases de datos, 2 usuarios
+
+**Estructura**:
+- Un único contenedor PostgreSQL (un clúster)
+- Dos bases de datos independientes:
+  - `ilenia_auth` → Usuarios, roles, permisos
+  - `ilenia_events` → Eventos, canales, asignaciones
+- Un usuario por servicio con permisos solo sobre su DB:
+  - `ilenia_auth_user` → DB `ilenia_auth`
+  - `ilenia_events_user` → DB `ilenia_events`
+
+**Ventajas**:
+- ✅ Aislamiento real (menos acoplamiento invisible que con schemas)
+- ✅ Backups/restore por DB independientes
+- ✅ Rotación de credenciales por servicio
+- ✅ Permisos más limpios y seguros
+- ✅ Cada servicio lleva sus migraciones (Alembic) sin pisarse
+
+#### Stack de Persistencia
+**ORM y Migraciones**: SQLAlchemy 2.0 + Alembic
+- **ORM**: SQLAlchemy 2.0 (estilo tipado `Mapped[]`, `mapped_column`, `DeclarativeBase`)
+- **Driver async**: `asyncpg` + `sqlalchemy[asyncio]`
+- **Migraciones**: Alembic (cada servicio con su `alembic.ini` y `versions/`)
+- **Schemas**: Pydantic v2 para request/response (separados de modelos ORM)
+
+**Beneficios**:
+- Control fino de transacciones, constraints, índices, locks
+- Migrations maduras (offline/online)
+- Fácil separar por servicio
+- Estándar de facto en producción Python
+
+#### Preparación para Managed PostgreSQL (Digital Ocean, AWS RDS, etc.)
+**Principios de diseño**:
+1. ✅ **No acoplar a Postgres local**: Todo por env vars (`host/port/db/user/pass/sslmode`)
+2. ✅ **Alembic como única fuente de verdad** del esquema
+3. ✅ **Evitar features que rompen en managed**:
+   - Extensiones no estándar
+   - Funciones que leen/escriben archivos del SO
+   - Jobs que asumen acceso al SO del DB server
+4. ✅ **Probar dump/restore temprano** para detectar sorpresas
+
+**Variables de entorno**:
+```bash
+# Auth Service
+DATABASE_URL=postgresql+asyncpg://ilenia_auth_user:password@postgres:5432/ilenia_auth
+
+# Events Service
+DATABASE_URL=postgresql+asyncpg://ilenia_events_user:password@postgres:5432/ilenia_events
+```
 
 ## Flujos del Sistema
 
@@ -366,7 +699,7 @@ HF_MT_TOKEN=hf_your_token_here
 
 ### Auth Service
 ```bash
-AUTH_ISSUER=https://auth.ilenia.link3rs.com
+AUTH_ISSUER=https://ilenia.link3rs.com
 AUTH_AUDIENCE=event-service,livekit-service,live-service
 ACCESS_TTL_SECONDS=3600
 REFRESH_TTL_SECONDS=2592000

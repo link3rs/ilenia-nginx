@@ -209,7 +209,7 @@ ASR_MIN_SILENCE_DURATION_MS=500
 ASR_SPEECH_PAD_MS=400
 
 # Auth Service Configuration
-AUTH_ISSUER=https://auth.ilenia.link3rs.com
+AUTH_ISSUER=https://ilenia.link3rs.com
 ACCESS_TTL_SECONDS=3600
 AUTH_SEED_ADMIN_EMAIL=admin@ilenia.com
 AUTH_SEED_ADMIN_PASSWORD=your_secure_password_here

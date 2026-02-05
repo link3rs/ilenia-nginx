@@ -52,7 +52,7 @@ La operativa actual (Fase 2) levanta el stack con autenticación:
    LOG_LEVEL=INFO
    
    # Auth Service (REQUERIDO)
-   AUTH_ISSUER=https://auth.ilenia.link3rs.com
+   AUTH_ISSUER=https://ilenia.link3rs.com
    ACCESS_TTL_SECONDS=3600
    AUTH_SEED_ADMIN_EMAIL=admin@ilenia.link3rs.com
    AUTH_SEED_ADMIN_PASSWORD=your_secure_password_here
