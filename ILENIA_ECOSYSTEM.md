@@ -6,6 +6,108 @@ Plataforma de eventos en vivo con transcripción automática (STT), traducción 
 - **Modo WebSocket** (legacy): Subtítulos vía WebSocket
 - **Modo LiveKit** (nuevo): Audio original + traducciones vía WebRTC
 
+## Patrón de Arquitectura Estándar
+
+### PersistenceProvider Pattern (Recomendado)
+
+Todos los servicios del ecosistema deben seguir el patrón **Strategy + Dependency Injection** para la capa de persistencia, permitiendo múltiples backends sin cambiar la lógica de negocio.
+
+**Arquitectura estándar**:
+```
+┌─────────────────────────────────────────────────────┐
+│              FastAPI Application                    │
+│                                                     │
+│  ┌──────────────────────────────────────────────┐  │
+│  │   get_handler()                              │  │
+│  │   USE_<SERVICE>_MOCK?                        │  │
+│  └──────┬───────────────────────────────────────┘  │
+│         │                                           │
+│    ┌────┴─────┐                                    │
+│    │          │                                    │
+│  Mock       Prod                                   │
+│    │          │                                    │
+│    │    ┌─────┴──────────┐                        │
+│    │    │ Persistence    │                        │
+│    │    │  Provider      │                        │
+│    │    │  (injected)    │                        │
+│    │    └─────┬──────────┘                        │
+│    │          │                                    │
+│    │    ┌─────┴──────┐                            │
+│    │    │            │                            │
+│    │  InMemory   PostgreSQL                       │
+│    │    │            │                            │
+│    │  storage/*  repositories/*                   │
+└────┴────┴────────────┴─────────────────────────────┘
+```
+
+### Estructura de Archivos Estándar
+
+```
+src/
+├── persistence/
+│   ├── __init__.py
+│   ├── base.py              # PersistenceProvider (ABC)
+│   ├── in_memory.py         # PersistenceInMemory
+│   └── postgresql.py        # PersistencePostgreSQL
+├── api_<service>/runtime/
+│   ├── handler_prod.py      # Handler principal (refactorizado con DI)
+│   ├── handler_mock.py      # Handler mock para testing
+│   ├── handlers.py          # Protocol + get_handler() + get_persistence()
+│   └── <service>_server.py  # Carga de implementaciones
+├── db/
+│   ├── models.py            # SQLAlchemy models
+│   ├── database.py          # Async engine y session
+│   └── startup.py           # Lifespan y seed
+├── repositories/           # Para PostgreSQL (async)
+│   ├── <entity>_repo.py
+│   └── ...
+├── storage/                # Para InMemory (legacy)
+│   ├── <entity>_storage.py
+│   └── ...
+├── services/               # Lógica de negocio (opcional)
+└── config.py               # USE_DATABASE + USE_<SERVICE>_MOCK
+```
+
+### Variables de Entorno Estándar
+
+```bash
+# Handler selection
+USE_<SERVICE>_MOCK=false    # true = Mock handler (testing)
+                            # false = Prod handler (production)
+
+# Persistence selection (only for Prod handler)
+USE_DATABASE=false          # true = PostgreSQL (production)
+                            # false = InMemory (development)
+
+# Database configuration
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/<service>_db
+```
+
+### Modos de Operación Estándar
+
+| Modo | USE_<SERVICE>_MOCK | USE_DATABASE | Handler | Persistence | Uso |
+|------|-------------------|--------------|---------|-------------|-----|
+| **Desarrollo** | false | false | Prod | InMemory | Desarrollo sin PostgreSQL |
+| **Producción** | false | true | Prod | PostgreSQL | Producción con persistencia |
+| **Testing** | true | - | Mock | - | Tests unitarios |
+
+### Ventajas del Patrón
+
+1. **Separation of Concerns**: Handler (lógica) vs Persistence (datos)
+2. **Dependency Injection**: Handler recibe Persistence como parámetro
+3. **Strategy Pattern**: Cambiar backend sin cambiar handler
+4. **Testabilidad**: Mock handler para tests, Prod para producción
+5. **DRY**: Un solo handler de producción, múltiples backends
+6. **Flexibilidad**: Fácil agregar Redis, MongoDB, etc.
+7. **Consistencia**: Todos los servicios siguen la misma arquitectura
+
+### Servicios que Implementan el Patrón
+
+- ✅ **ilenia-auth-service** (v3.0.0) - Implementación completa con PostgreSQL
+- 🚧 **ilenia-events-service** - En proceso de implementación
+- ⏳ **ilenia-livekit-provider** - Pendiente de implementar
+- ⏳ **ilenia-live-service** - Pendiente de implementar
+
 ## Arquitectura del Ecosistema
 
 ```
@@ -64,6 +166,8 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-auth-service`
 **Tecnología**: Python, FastAPI, PostgreSQL 16, JWT (RS256), SQLAlchemy 2.0, Alembic
 **Puerto**: 8081
+**API version**: v2
+
 **Función**:
 - Autenticación y autorización centralizada
 - Emisión de JWT con firma RSA (RS256)
@@ -73,8 +177,13 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 - Auditoría completa (granted_by, granted_at en custom_permissions)
 - Refresh tokens con HttpOnly cookies
 - **OAuth2 client credentials (S2S)** - Para `ilenia-live-service`
-- JWKS endpoint para verificación de tokens
+- JWKS endpoint para verificación de tokens: `/v2/.well-known/jwks.json`
 - **Migraciones Alembic** como única fuente de verdad
+
+**Arquitectura**: ✅ **PersistenceProvider Pattern implementado**
+- Handler de producción con Dependency Injection
+- PostgreSQL (producción) + InMemory (desarrollo) + Mock (testing)
+- Variables: `USE_AUTH_MOCK=false`, `USE_DATABASE=true`
 
 **Arquitectura RBAC**:
 - Usuarios pueden tener múltiples roles
@@ -87,7 +196,7 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 - Migraciones Alembic (única fuente de verdad)
 - Flujo: OpenAPI Spec → DTOs → SQLAlchemy Models → Alembic → PostgreSQL
 
-**Estado**: ✅ Operativo (v2.3.0)
+**Estado**: ✅ Operativo (v3.0.0)
  
 ### 3 Live Event Service - WebSocket (LEGACY) (`ilenia-live-event-service`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-live-event-service`
@@ -119,21 +228,38 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 
 ## 5. Events Service (`ilenia-events-service`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-events-service`
-**Tecnología**: Python, FastAPI, PostgreSQL, SQLAlchemy
+**Tecnología**: Python, FastAPI, PostgreSQL 16, SQLAlchemy 2.0, Alembic
 **Puerto**: 8083
+**API version**: v1
+
 **Función**:
 - **CRUD persistente de eventos** (PostgreSQL) - Fuente de verdad
 - Gestión completa de metadata: título, descripción, fechas, canales
 - Asignación de speakers y listeners
 - Configuración de idiomas (source/target) por canal
+- Gestión de estado del evento (draft, ready, live, ended)
+- Templates de eventos para reutilización
 - Provee configuración a `ilenia-live-service` y `ilenia-live-event-service`
 
-**Estado**: 🚧 En desarrollo - Asumiendo responsabilidad de CRUD desde `ilenia-live-event-service`
+**Arquitectura**: 🚧 **En proceso de migrar a PersistenceProvider Pattern**
+- Modelos SQLAlchemy 2.0 creados
+- Migraciones Alembic configuradas
+- Pendiente: Refactorizar handlers para usar Dependency Injection
+- Variables planificadas: `USE_EVENT_MOCK`, `USE_DATABASE`
+
+**Base de Datos**:
+- PostgreSQL 16 con SQLAlchemy 2.0 async
+- Migraciones Alembic
+- Docker Compose con PostgreSQL configurado
+
+**Estado**: 🚧 En desarrollo activo - CRUD operativo con PostgreSQL
 
 ## 6. LiveKit Provider (`ilenia-livekit-provider`)
 **Ubicación**: `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-livekit-provider`
 **Tecnología**: Python, FastAPI, LiveKit SDK, WebRTC
 **Puerto**: 8086
+**API version**: v2
+
 **Función**:
 - **Gestión de LiveKit rooms** (crear, cerrar)
 - **Emisión de tokens de acceso**:
@@ -142,6 +268,11 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
   - Tokens de agentes (ASR, MT) - Para `ilenia-live-service`
 - Interfaz con LiveKit Server (Cloud o self-hosted)
 - NO gestiona datos de eventos (delegado a `ilenia-events-service`)
+
+**Arquitectura**: ⏳ **Pendiente migrar a PersistenceProvider Pattern**
+- Actualmente stateless (no persiste datos propios)
+- Evaluación pendiente: ¿Necesita persistencia local para logs/auditoría?
+- Si sí: Implementar PersistenceProvider con PostgreSQL
 
 **Estado**: 🚧 En desarrollo activo
 
@@ -160,11 +291,32 @@ VITE_BROADCAST_LIVEKIT=true  → ilenia-live-service (LiveKit/WebRTC)
 **Ubicación**: `/Users/link3rs/Developer/SpecsWorkshop/github.com/link3rs/ilenia-apis-specs`
 **Tecnología**: OpenAPI 3.1, AsyncAPI 3.0, Redocly
 **Función**:
-- Especificaciones de todas las APIs REST
-- Especificaciones de protocolos WebSocket
+- **FUENTE DE VERDAD** para todas las APIs del ecosistema
+- Especificaciones de todas las APIs REST (OpenAPI 3.1)
+- Especificaciones de protocolos WebSocket (AsyncAPI 3.0)
 - Generación de SDKs (Python, TypeScript)
 - Generación de modelos TypeScript para WebSocket
 - Documentación interactiva
+- Validación y bundling de specs
+
+**Flujo de Trabajo para APIs**:
+1. Editar specs en `ilenia-apis-specs`
+2. Validar: `npm run check-{service}`
+3. Copiar bundle al servicio correspondiente
+4. Generar código: `./scripts/generate-openapi-server.sh`
+
+**Repositorios del Ecosistema**:
+
+| Servicio | Repositorio | Directorio local | Puerto |
+|----------|-------------|------------------|--------|
+| Auth | ilenia-auth-service | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-auth-service` | 8081 |
+| Events | ilenia-events-service | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-events-service` | 8083 |
+| LiveKit | ilenia-livekit-provider | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-livekit-provider` | 8086 |
+| Live Event (WS) | ilenia-live-event-service | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-live-event-service` | 8082 |
+| Live (LiveKit) | ilenia-live-service | `/Users/link3rs/Developer/PythonWorkshop/github.com/link3rs/ilenia-live-service` | 8092 |
+| Frontend | ilenia-react-frontend | `/Users/link3rs/Developer/JSWorkshop/github.com/link3rs/ilenia-react-frontend` | 5173 |
+| Nginx | ilenia-nginx | `/Users/link3rs/Developer/NginxWorkshop/github.com/link3rs/ilenia-nginx` | 80/443 |
+| API Specs | ilenia-apis-specs | `/Users/link3rs/Developer/SpecsWorkshop/github.com/link3rs/ilenia-apis-specs` | - |
 
 ### 8. Redis (Infraestructura)
 **Container**: `ilenia-redis`
