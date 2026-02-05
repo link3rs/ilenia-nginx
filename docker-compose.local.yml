@@ -152,7 +152,7 @@ services:
       # Database (Alembic migrations run automatically)
       - DATABASE_URL=postgresql+asyncpg://ilenia_auth_user:${POSTGRES_AUTH_PASSWORD:-auth_secret}@postgres:5432/ilenia_auth
       # JWT Configuration
-      - AUTH_ISSUER=${AUTH_ISSUER:-http://localhost:8081}
+      - AUTH_ISSUER=${AUTH_ISSUER:-http://localhost:8081/v2}
       - AUTH_AUDIENCE=event-service,livekit-service,live-event-service
       - ACCESS_TTL_SECONDS=${ACCESS_TTL_SECONDS:-3600}
       - KEYS_DIR=/app/keys
@@ -162,13 +162,13 @@ services:
       - AUTH_SEED_ADMIN_NAME=${AUTH_SEED_ADMIN_NAME:-Default Admin}
       - AUTH_SEED_ADMIN_LANG=${AUTH_SEED_ADMIN_LANG:-en}
       # CORS
-      - ALLOWED_ORIGINS=["http://localhost","http://localhost:5173","http://127.0.0.1","http://127.0.0.1:5173"]
+      - ALLOWED_ORIGINS=["http://localhost:5173","http://localhost:3000","http://127.0.0.1:5173","http://localhost","http://127.0.0.1"]
     volumes:
       - auth-keys:/app/keys
     networks:
       - ilenia-net
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health').read()"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/v2/health').read()"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -177,8 +177,9 @@ services:
   # ============================================
   # Event Service (Events CRUD API)
   # ============================================
-  # TODO: Implement PostgreSQL persistence with Alembic
-  # Currently uses JSON file storage as fallback
+  # Uses GHCR :develop image with JSON storage
+  # PostgreSQL with UUID migration is in progress (not yet in :develop)
+  # Database is ready: ilenia_events (user: ilenia_events_user)
   event-service:
     image: ghcr.io/link3rs/ilenia-events-service:develop
     container_name: ilenia-event-service
@@ -190,16 +191,18 @@ services:
       - APP_HOST=0.0.0.0
       - APP_PORT=8083
       - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
-      # Database (ready for PostgreSQL implementation)
+      # Storage: JSON file (PostgreSQL UUID migration in progress)
       - USE_DATABASE=false
+      - USE_EVENT_MOCK=false
       - DATABASE_URL=postgresql+asyncpg://ilenia_events_user:${POSTGRES_EVENTS_PASSWORD:-events_secret}@postgres:5432/ilenia_events
-      # Auth
-      - ALLOWED_ORIGINS=["http://localhost","http://localhost:5173","http://127.0.0.1","http://127.0.0.1:5173"]
-      - AUTH_SERVICE_URL=http://auth-service:8081
-      - AUTH_ISSUER=${AUTH_ISSUER:-http://localhost:8081}
-      - AUTH_AUDIENCE=event-service
-      # Fallback to JSON storage (current implementation)
       - EVENTS_STORAGE_PATH=/app/data/events.json
+      # Auth
+      - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
+      - ALLOWED_ORIGINS=["http://localhost","http://localhost:5173","http://127.0.0.1","http://127.0.0.1:5173"]
+      - AUTH_SERVICE_URL=http://auth-service:8081/v2
+      - AUTH_ISSUER=${AUTH_ISSUER:-http://localhost:8081/v2}
+      - AUTH_AUDIENCE=event-service
+      - AUTH_JWKS_URL=${AUTH_JWKS_URL:-http://auth-service:8081/v2/.well-known/jwks.json}
     depends_on:
       auth-service:
         condition: service_healthy
