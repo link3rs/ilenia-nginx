@@ -108,6 +108,116 @@ DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/<service>_db
 - ⏳ **ilenia-livekit-provider** - Pendiente de implementar
 - ⏳ **ilenia-live-service** - Pendiente de implementar
 
+## Estrategia de Testing Estándar
+
+### Framework de Testing
+
+Todos los servicios del ecosistema deben usar la misma estrategia de testing:
+
+**Stack de Testing**:
+- **pytest** - Framework de testing principal
+- **httpx.AsyncClient** - Cliente HTTP async para testing de FastAPI
+- **pytest-asyncio** - Soporte para tests asíncronos
+- **pytest-cov** - Coverage reporting (opcional)
+
+### Estructura de Tests Estándar
+
+```
+tests/
+├── conftest.py              # Fixtures compartidas
+├── test_<entity>_crud.py    # Tests CRUD por entidad
+├── test_<feature>.py        # Tests por feature
+└── test_health_api.py       # Tests de health check
+```
+
+### Fixtures Comunes
+
+**conftest.py** debe proporcionar:
+```python
+@pytest_asyncio.fixture
+async def async_client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+    """Async HTTP client para testing."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+def sample_<entity>_data() -> dict:
+    """Datos de ejemplo para testing."""
+    return {...}
+```
+
+### Comandos de Testing Estándar
+
+```bash
+# Ejecutar todos los tests
+pytest
+
+# Tests con verbose
+pytest -v
+
+# Tests específicos
+pytest tests/test_<module>.py
+
+# Con coverage
+pytest --cov=src --cov-report=html
+
+# Tests en paralelo
+pytest -n auto
+```
+
+### Ejemplo de Test Async
+
+```python
+import pytest
+from httpx import AsyncClient
+
+@pytest.mark.asyncio
+async def test_create_entity(async_client: AsyncClient, sample_data: dict):
+    """Test creating a new entity."""
+    response = await async_client.post("/entities", json=sample_data)
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == sample_data["name"]
+    assert "id" in data
+```
+
+### Cobertura de Tests Recomendada
+
+Cada servicio debe tener tests para:
+- ✅ **CRUD completo**: Create, Read, Update, Delete
+- ✅ **Listado con filtros**: Paginación, búsqueda
+- ✅ **Validación**: Casos de error, 404, 400
+- ✅ **Autenticación**: Permisos, ownership
+- ✅ **Integración**: Con otros servicios (mocked)
+- ✅ **Health check**: Endpoint de salud
+
+### Testing con Base de Datos
+
+Para tests de integración con PostgreSQL:
+
+```bash
+# 1. Levantar PostgreSQL de test
+docker-compose -f docker-compose.test.yml up -d
+
+# 2. Aplicar migraciones
+alembic upgrade head
+
+# 3. Ejecutar tests
+USE_DATABASE=true pytest tests/
+
+# 4. Limpiar
+docker-compose -f docker-compose.test.yml down -v
+```
+
+### Servicios con Testing Implementado
+
+- ✅ **ilenia-auth-service** - Tests completos con pytest + httpx
+- ✅ **ilenia-events-service** - Tests CRUD, channels, status lifecycle
+- ⏳ **ilenia-livekit-provider** - Pendiente
+- ⏳ **ilenia-live-service** - Pendiente
+
 ## Arquitectura del Ecosistema
 
 ```
